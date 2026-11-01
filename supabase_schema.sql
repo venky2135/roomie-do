@@ -1,0 +1,198 @@
+-- ============================================================
+-- RoomieDo — Supabase SQL Schema
+-- Run this in Supabase → SQL Editor → New Query
+-- ============================================================
+
+-- ── Houses ──────────────────────────────────────────────────
+CREATE TABLE houses (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name        TEXT NOT NULL,
+  invite_code TEXT UNIQUE NOT NULL,
+  admin_id    UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ── Profiles ─────────────────────────────────────────────────
+CREATE TABLE profiles (
+  id             UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  house_id       UUID REFERENCES houses(id) ON DELETE SET NULL,
+  username       TEXT NOT NULL,
+  phone          TEXT,
+  avatar_url     TEXT,
+  total_credits  INT DEFAULT 0,
+  level          INT DEFAULT 1,
+  xp             INT DEFAULT 0,
+  streak_days    INT DEFAULT 0,
+  is_admin       BOOLEAN DEFAULT FALSE,
+  last_active_at TIMESTAMPTZ,
+  created_at     TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ── Task Templates ───────────────────────────────────────────
+CREATE TABLE task_templates (
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  house_id       UUID NOT NULL REFERENCES houses(id) ON DELETE CASCADE,
+  name           TEXT NOT NULL,
+  icon           TEXT DEFAULT '🧹',
+  category       TEXT DEFAULT 'General',
+  base_credits   INT DEFAULT 20,
+  photo_required BOOLEAN DEFAULT FALSE,
+  is_active      BOOLEAN DEFAULT TRUE,
+  created_at     TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ── Task Logs ────────────────────────────────────────────────
+CREATE TABLE task_logs (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id         UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  task_id         UUID NOT NULL REFERENCES task_templates(id) ON DELETE CASCADE,
+  credits_awarded INT DEFAULT 0,
+  photo_url       TEXT,
+  notes           TEXT,
+  completed_at    TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ── Badges ───────────────────────────────────────────────────
+CREATE TABLE badges (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name            TEXT NOT NULL,
+  icon            TEXT,
+  description     TEXT,
+  condition_type  TEXT NOT NULL, -- 'tasks_count' | 'streak_days' | 'total_credits' | 'level'
+  condition_value INT NOT NULL
+);
+
+-- ── User Badges ──────────────────────────────────────────────
+CREATE TABLE user_badges (
+  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id    UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  badge_id   UUID NOT NULL REFERENCES badges(id) ON DELETE CASCADE,
+  earned_at  TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(user_id, badge_id)
+);
+
+-- ── Reactions ────────────────────────────────────────────────
+CREATE TABLE reactions (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  task_log_id UUID NOT NULL REFERENCES task_logs(id) ON DELETE CASCADE,
+  user_id     UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  emoji       TEXT NOT NULL,
+  created_at  TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(task_log_id, user_id, emoji)
+);
+
+-- ── Nudges ───────────────────────────────────────────────────
+CREATE TABLE nudges (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  from_user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  to_user_id   UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  sent_at      TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ============================================================
+-- ROW LEVEL SECURITY (RLS)
+-- ============================================================
+
+ALTER TABLE houses       ENABLE ROW LEVEL SECURITY;
+ALTER TABLE profiles     ENABLE ROW LEVEL SECURITY;
+ALTER TABLE task_templates ENABLE ROW LEVEL SECURITY;
+ALTER TABLE task_logs    ENABLE ROW LEVEL SECURITY;
+ALTER TABLE badges       ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_badges  ENABLE ROW LEVEL SECURITY;
+ALTER TABLE reactions    ENABLE ROW LEVEL SECURITY;
+ALTER TABLE nudges       ENABLE ROW LEVEL SECURITY;
+
+-- Profiles: user can read own profile + housemates
+CREATE POLICY "profiles_read" ON profiles FOR SELECT
+  USING (
+    id = auth.uid()
+    OR house_id IN (SELECT house_id FROM profiles WHERE id = auth.uid())
+  );
+
+CREATE POLICY "profiles_update_own" ON profiles FOR UPDATE
+  USING (id = auth.uid());
+
+CREATE POLICY "profiles_insert_own" ON profiles FOR INSERT
+  WITH CHECK (id = auth.uid());
+
+-- Houses: users can read their own house
+CREATE POLICY "houses_read" ON houses FOR SELECT
+  USING (id IN (SELECT house_id FROM profiles WHERE id = auth.uid()));
+
+CREATE POLICY "houses_insert" ON houses FOR INSERT
+  WITH CHECK (admin_id = auth.uid());
+
+CREATE POLICY "houses_update_admin" ON houses FOR UPDATE
+  USING (admin_id = auth.uid());
+
+-- Task templates: house members can read; backend (service role) manages writes
+CREATE POLICY "task_templates_read" ON task_templates FOR SELECT
+  USING (house_id IN (SELECT house_id FROM profiles WHERE id = auth.uid()));
+
+-- Task logs: house members can read
+CREATE POLICY "task_logs_read" ON task_logs FOR SELECT
+  USING (user_id IN (SELECT id FROM profiles WHERE house_id = (SELECT house_id FROM profiles WHERE id = auth.uid())));
+
+-- Badges: public read
+CREATE POLICY "badges_read" ON badges FOR SELECT USING (TRUE);
+
+-- User badges: user can read own + housemates
+CREATE POLICY "user_badges_read" ON user_badges FOR SELECT
+  USING (user_id IN (SELECT id FROM profiles WHERE house_id = (SELECT house_id FROM profiles WHERE id = auth.uid())));
+
+-- Reactions: house members can read + insert
+CREATE POLICY "reactions_read" ON reactions FOR SELECT
+  USING (user_id IN (SELECT id FROM profiles WHERE house_id = (SELECT house_id FROM profiles WHERE id = auth.uid())));
+
+CREATE POLICY "reactions_insert" ON reactions FOR INSERT
+  WITH CHECK (user_id = auth.uid());
+
+-- Nudges
+CREATE POLICY "nudges_read" ON nudges FOR SELECT
+  USING (to_user_id = auth.uid() OR from_user_id = auth.uid());
+
+-- ============================================================
+-- REALTIME: Enable for activity feed
+-- ============================================================
+ALTER PUBLICATION supabase_realtime ADD TABLE task_logs;
+ALTER PUBLICATION supabase_realtime ADD TABLE nudges;
+
+-- ============================================================
+-- HELPER FUNCTION: Award bonus credits (used by weekly cron)
+-- ============================================================
+CREATE OR REPLACE FUNCTION award_bonus_credits(p_user_id UUID, p_credits INT)
+RETURNS VOID AS $$
+BEGIN
+  UPDATE profiles
+  SET
+    total_credits = total_credits + p_credits,
+    xp = xp + p_credits
+  WHERE id = p_user_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- ============================================================
+-- SEED: Default Badges
+-- ============================================================
+INSERT INTO badges (name, icon, description, condition_type, condition_value) VALUES
+  ('First Chore', '⭐', 'Complete your first task', 'tasks_count', 1),
+  ('Getting Started', '🌱', 'Complete 5 tasks', 'tasks_count', 5),
+  ('Task Master', '💪', 'Complete 25 tasks', 'tasks_count', 25),
+  ('Centurion', '💯', 'Complete 100 tasks', 'tasks_count', 100),
+  ('On a Roll', '🔥', 'Maintain a 3-day streak', 'streak_days', 3),
+  ('7-Day Warrior', '⚡', 'Maintain a 7-day streak', 'streak_days', 7),
+  ('Monthly Master', '🗓️', 'Maintain a 30-day streak', 'streak_days', 30),
+  ('Credit Starter', '💰', 'Earn 100 total credits', 'total_credits', 100),
+  ('High Earner', '💎', 'Earn 500 total credits', 'total_credits', 500),
+  ('Credit King', '👑', 'Earn 2000 total credits', 'total_credits', 2000),
+  ('Level Up', '🎮', 'Reach Level 3', 'level', 3),
+  ('House Pro', '🏠', 'Reach Level 6', 'level', 6),
+  ('Legend', '🌟', 'Reach Level 9', 'level', 9);
+
+-- ============================================================
+-- STORAGE: Create buckets
+-- ============================================================
+-- Run these in Supabase Dashboard → Storage → New Bucket
+-- Bucket name: avatars      (public: false)
+-- Bucket name: task-photos  (public: false)
+
