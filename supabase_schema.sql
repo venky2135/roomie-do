@@ -102,11 +102,19 @@ ALTER TABLE user_badges  ENABLE ROW LEVEL SECURITY;
 ALTER TABLE reactions    ENABLE ROW LEVEL SECURITY;
 ALTER TABLE nudges       ENABLE ROW LEVEL SECURITY;
 
+-- ============================================================
+-- HELPER FUNCTION: Get current user's house_id (prevents RLS recursion)
+-- ============================================================
+CREATE OR REPLACE FUNCTION get_my_house_id()
+RETURNS UUID AS $$
+  SELECT house_id FROM profiles WHERE id = auth.uid();
+$$ LANGUAGE sql STABLE SECURITY DEFINER;
+
 -- Profiles: user can read own profile + housemates
 CREATE POLICY "profiles_read" ON profiles FOR SELECT
   USING (
     id = auth.uid()
-    OR house_id IN (SELECT house_id FROM profiles WHERE id = auth.uid())
+    OR (house_id IS NOT NULL AND house_id = get_my_house_id())
   );
 
 CREATE POLICY "profiles_update_own" ON profiles FOR UPDATE
@@ -117,7 +125,7 @@ CREATE POLICY "profiles_insert_own" ON profiles FOR INSERT
 
 -- Houses: users can read their own house
 CREATE POLICY "houses_read" ON houses FOR SELECT
-  USING (id IN (SELECT house_id FROM profiles WHERE id = auth.uid()));
+  USING (id = get_my_house_id());
 
 CREATE POLICY "houses_insert" ON houses FOR INSERT
   WITH CHECK (admin_id = auth.uid());
@@ -127,11 +135,14 @@ CREATE POLICY "houses_update_admin" ON houses FOR UPDATE
 
 -- Task templates: house members can read; backend (service role) manages writes
 CREATE POLICY "task_templates_read" ON task_templates FOR SELECT
-  USING (house_id IN (SELECT house_id FROM profiles WHERE id = auth.uid()));
+  USING (house_id = get_my_house_id());
 
 -- Task logs: house members can read
 CREATE POLICY "task_logs_read" ON task_logs FOR SELECT
-  USING (user_id IN (SELECT id FROM profiles WHERE house_id = (SELECT house_id FROM profiles WHERE id = auth.uid())));
+  USING (
+    user_id = auth.uid()
+    OR user_id IN (SELECT id FROM profiles WHERE house_id = get_my_house_id())
+  );
 
 -- Badges: public read
 CREATE POLICY "badges_read" ON badges FOR SELECT USING (TRUE);

@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
 const dotenv_1 = __importDefault(require("dotenv"));
+const auth_1 = __importDefault(require("./routes/auth"));
 const tasks_1 = __importDefault(require("./routes/tasks"));
 const house_1 = __importDefault(require("./routes/house"));
 const leaderboard_1 = __importDefault(require("./routes/leaderboard"));
@@ -22,6 +23,7 @@ app.get('/health', (_req, res) => {
     res.json({ status: 'ok', service: 'roomie-do-backend' });
 });
 // Routes
+app.use('/api/auth', auth_1.default);
 app.use('/api/tasks', tasks_1.default);
 app.use('/api/house', house_1.default);
 app.use('/api/leaderboard', leaderboard_1.default);

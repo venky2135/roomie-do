@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import authRoutes from './routes/auth';
 import taskRoutes from './routes/tasks';
 import houseRoutes from './routes/house';
 import leaderboardRoutes from './routes/leaderboard';
@@ -22,6 +23,7 @@ app.get('/health', (_req, res) => {
 });
 
 // Routes
+app.use('/api/auth', authRoutes);
 app.use('/api/tasks', taskRoutes);
 app.use('/api/house', houseRoutes);
 app.use('/api/leaderboard', leaderboardRoutes);
