@@ -99,6 +99,16 @@ export default function FeedScreen() {
   const handleVerify = async (logId: string) => {
     if (!profile?.id) return;
 
+    const targetItem = feed.find((f) => f.id === logId);
+    if (targetItem && targetItem.user_id === profile.id) {
+      if (Platform.OS === 'web') {
+        alert('You cannot approve your own chore. A roommate must approve it.');
+      } else {
+        Alert.alert('Notice', 'You cannot approve your own chore. A roommate must approve it.');
+      }
+      return;
+    }
+
     const executeApprove = async () => {
       // Optimistically update feed immediately to approved
       setFeed((prevFeed) =>
@@ -318,10 +328,12 @@ export default function FeedScreen() {
                         {isMine ? 'Pending roommate approval' : 'Needs approval'}
                       </Text>
                     </View>
-                    <TouchableOpacity style={styles.verifyBtn} onPress={() => handleVerify(item.id)}>
-                      <Ionicons name="checkmark-circle" size={14} color="#FFF" />
-                      <Text style={styles.verifyBtnText}>Approve</Text>
-                    </TouchableOpacity>
+                    {!isMine && (
+                      <TouchableOpacity style={styles.verifyBtn} onPress={() => handleVerify(item.id)}>
+                        <Ionicons name="checkmark-circle" size={14} color="#FFF" />
+                        <Text style={styles.verifyBtnText}>Approve</Text>
+                      </TouchableOpacity>
+                    )}
                   </View>
                 ) : (
                   <View style={styles.verifiedRow}>
