@@ -339,8 +339,7 @@ export default function FeedScreen() {
                   {meta.feedbacks.map((fb) => (
                     <View key={fb.id} style={styles.floatingFeedbackBadge}>
                       <View style={styles.floatingTag}>
-                        <Ionicons name="eye-off" size={10} color="#FFF" />
-                        <Text style={styles.floatingTagText}>Anonymous</Text>
+                        <Ionicons name="eye-off" size={11} color="#FFF" />
                       </View>
                       <Text style={styles.floatingFeedbackQuote} numberOfLines={2}>
                         "{fb.text}"
@@ -565,15 +564,13 @@ const styles = StyleSheet.create({
     elevation: 1,
   },
   floatingTag: {
-    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: COLORS.primary,
-    paddingHorizontal: 5,
-    paddingVertical: 1,
-    borderRadius: RADIUS.full,
-    gap: 2,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
   },
-  floatingTagText: { fontSize: 8, fontWeight: '800', color: '#FFF' },
   floatingFeedbackQuote: {
     fontSize: 10,
     color: '#1E293B',
