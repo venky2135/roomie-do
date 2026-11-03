@@ -13,6 +13,7 @@ import { supabase } from '../../lib/supabase';
 import { fetchLeaderboard } from '../../lib/api';
 import { useAuthStore } from '../../store/useAuthStore';
 import { COLORS, RADIUS } from '../../constants/theme';
+import { fetchActiveLeaves } from '../../lib/leaveWorkflow';
 
 type Period = 'week' | 'month' | 'all';
 
@@ -29,12 +30,19 @@ interface LeaderboardMember {
 export default function HomeScreen() {
   const { profile, refreshProfile } = useAuthStore();
   const [leaderboard, setLeaderboard] = useState<LeaderboardMember[]>([]);
+  const [onLeaveUserIds, setOnLeaveUserIds] = useState<string[]>([]);
   const [period, setPeriod] = useState<Period>('week');
   const [todayCount, setTodayCount] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
 
   const loadData = useCallback(async (p: Period = period) => {
     if (!profile?.house_id) return;
+
+    // Load active approved leaves for house
+    try {
+      const leaves = await fetchActiveLeaves(profile.house_id);
+      setOnLeaveUserIds(leaves);
+    } catch (_) {}
 
     // Today's completed tasks by current user
     const today = new Date();
@@ -291,11 +299,12 @@ export default function HomeScreen() {
               const heightPct = maxCredits > 0 ? Math.max((member.periodCredits / maxCredits) * 100, 8) : 8;
               const isTop = idx === 0 && member.periodCredits > 0;
               const isMe = member.id === profile?.id;
+              const isOnLeave = onLeaveUserIds.includes(member.id);
 
               return (
                 <View key={member.id} style={styles.columnItem}>
                   {/* XP Value at Top of Bar */}
-                  <Text style={[styles.barValueText, isTop && styles.barValueTop]}>
+                  <Text style={[styles.barValueText, isTop && styles.barValueTop, isOnLeave && styles.barValueOnLeave]}>
                     {member.periodCredits}
                   </Text>
 
@@ -305,18 +314,29 @@ export default function HomeScreen() {
                       style={[
                         styles.barVerticalFill,
                         { height: `${heightPct}%` },
-                        isTop ? styles.barFillTop : isMe ? styles.barFillMe : styles.barFillOther,
+                        isOnLeave
+                          ? styles.barFillOnLeave
+                          : isTop
+                          ? styles.barFillTop
+                          : isMe
+                          ? styles.barFillMe
+                          : styles.barFillOther,
                       ]}
                     />
                   </View>
 
                   {/* Avatar & Label Below Bar */}
                   <View style={styles.columnFooter}>
-                    <Text style={styles.footerAvatar}>{member.avatar_url || '🧑'}</Text>
-                    <Text style={[styles.footerName, isMe && styles.footerNameMe]} numberOfLines={1}>
+                    <Text style={[styles.footerAvatar, isOnLeave && { opacity: 0.6 }]}>{member.avatar_url || '🧑'}</Text>
+                    <Text style={[styles.footerName, isMe && styles.footerNameMe, isOnLeave && styles.footerNameOnLeave]} numberOfLines={1}>
                       {isMe ? 'You' : member.username}
                     </Text>
                     <Text style={styles.footerRank}>#{idx + 1}</Text>
+                    {isOnLeave && (
+                      <View style={styles.columnLeaveBadge}>
+                        <Text style={styles.columnLeaveText}>Leave</Text>
+                      </View>
+                    )}
                   </View>
                 </View>
               );
@@ -326,16 +346,28 @@ export default function HomeScreen() {
 
         {/* Minimal Leaderboard Table Summary */}
         <View style={styles.rankList}>
-          {leaderboard.map((member, idx) => (
-            <View key={member.id} style={styles.rankRow}>
-              <Text style={styles.rankIndex}>#{idx + 1}</Text>
-              <Text style={styles.rankAvatar}>{member.avatar_url || '🧑'}</Text>
-              <Text style={[styles.rankUsername, member.id === profile?.id && styles.rankUsernameMe]}>
-                {member.username} {member.id === profile?.id ? '(You)' : ''}
-              </Text>
-              <Text style={styles.rankPoints}>{member.periodCredits} XP</Text>
-            </View>
-          ))}
+          {leaderboard.map((member, idx) => {
+            const isOnLeave = onLeaveUserIds.includes(member.id);
+
+            return (
+              <View key={member.id} style={[styles.rankRow, isOnLeave && styles.rankRowOnLeave]}>
+                <Text style={[styles.rankIndex, isOnLeave && { color: '#94A3B8' }]}>#{idx + 1}</Text>
+                <Text style={[styles.rankAvatar, isOnLeave && { opacity: 0.6 }]}>{member.avatar_url || '🧑'}</Text>
+                <View style={styles.rankNameCol}>
+                  <Text style={[styles.rankUsername, member.id === profile?.id && styles.rankUsernameMe, isOnLeave && styles.rankUsernameOnLeave]}>
+                    {member.username} {member.id === profile?.id ? '(You)' : ''}
+                  </Text>
+                  {isOnLeave && (
+                    <View style={styles.tableLeaveTag}>
+                      <Ionicons name="airplane" size={9} color="#64748B" />
+                      <Text style={styles.tableLeaveText}>On Leave</Text>
+                    </View>
+                  )}
+                </View>
+                <Text style={[styles.rankPoints, isOnLeave && styles.rankPointsOnLeave]}>{member.periodCredits} XP</Text>
+              </View>
+            );
+          })}
         </View>
         </>
         )}
@@ -524,9 +556,39 @@ const styles = StyleSheet.create({
   },
   rankIndex: { fontSize: 10, fontWeight: '700', color: '#9090A0', width: 18 },
   rankAvatar: { fontSize: 14 },
-  rankUsername: { fontSize: 11, color: '#1A1A24', flex: 1 },
+  rankUsername: { fontSize: 11, color: '#1A1A24' },
   rankUsernameMe: { fontWeight: '700', color: COLORS.primary },
   rankPoints: { fontSize: 11, fontWeight: '700', color: '#1A1A24' },
   chartEmpty: { paddingVertical: 24, alignItems: 'center', justifyContent: 'center' },
   chartEmptyText: { fontSize: 11, color: '#9090A0', fontStyle: 'italic' },
+  barFillOnLeave: { backgroundColor: '#94A3B8' },
+  barValueOnLeave: { color: '#94A3B8' },
+  footerNameOnLeave: { color: '#64748B' },
+  columnLeaveBadge: {
+    backgroundColor: '#E2E8F0',
+    paddingHorizontal: 3,
+    paddingVertical: 1,
+    borderRadius: 3,
+    marginTop: 1,
+  },
+  columnLeaveText: { fontSize: 6, fontWeight: '800', color: '#64748B' },
+  rankRowOnLeave: {
+    backgroundColor: '#F1F5F9',
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    marginVertical: 1,
+  },
+  rankNameCol: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 5 },
+  rankUsernameOnLeave: { color: '#64748B' },
+  rankPointsOnLeave: { color: '#64748B' },
+  tableLeaveTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#E2E8F0',
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: RADIUS.full,
+    gap: 2,
+  },
+  tableLeaveText: { fontSize: 8, fontWeight: '700', color: '#475569' },
 });

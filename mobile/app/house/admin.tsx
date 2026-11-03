@@ -30,6 +30,7 @@ export default function AdminScreen() {
           .select('*')
           .eq('house_id', profile.house_id)
           .neq('category', 'Marketplace')
+          .neq('category', 'Leave')
           .order('category'),
         supabaseAdmin.from('profiles').select('*').eq('house_id', profile.house_id),
         supabaseAdmin.from('houses').select('*').eq('id', profile.house_id).single(),

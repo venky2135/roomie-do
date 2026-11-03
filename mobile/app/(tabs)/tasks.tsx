@@ -51,6 +51,7 @@ export default function TasksScreen() {
         .eq('house_id', profile.house_id)
         .eq('is_active', true)
         .neq('category', 'Marketplace')
+        .neq('category', 'Leave')
         .order('category');
 
       if (!error && data) {
@@ -58,7 +59,7 @@ export default function TasksScreen() {
       } else {
         // Fallback to backend API
         const res = await fetchTasks(profile.house_id);
-        const regularTasks = res.data.tasks.filter((t: TaskTemplate) => t.category !== 'Marketplace');
+        const regularTasks = res.data.tasks.filter((t: TaskTemplate) => t.category !== 'Marketplace' && t.category !== 'Leave');
         setTasks(regularTasks);
       }
     } catch (e) {

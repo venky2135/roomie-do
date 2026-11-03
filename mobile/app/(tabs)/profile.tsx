@@ -8,12 +8,16 @@ import {
   Alert,
   RefreshControl,
   Platform,
+  Modal,
+  TextInput,
+  ActivityIndicator,
 } from 'react-native';
 import { router } from 'expo-router';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { supabase } from '../../lib/supabase';
 import { useAuthStore } from '../../store/useAuthStore';
 import { COLORS, FONTS, SPACING, RADIUS } from '../../constants/theme';
+import { submitLeaveRequest } from '../../lib/leaveWorkflow';
 
 const BADGES_LIST = [
   { id: '1', icon: 'restaurant-outline' as const, name: 'First Cook', earned: true },
@@ -28,6 +32,16 @@ export default function ProfileScreen() {
   const { profile, signOut, refreshProfile } = useAuthStore();
   const [completedCount, setCompletedCount] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Leave Request Modal State
+  const [leaveModalVisible, setLeaveModalVisible] = useState(false);
+  const [leaveDuration, setLeaveDuration] = useState('');
+  const [leaveStartDate, setLeaveStartDate] = useState('');
+  const [leaveEndDate, setLeaveEndDate] = useState('');
+  const [leaveReason, setLeaveReason] = useState('');
+  const [leaveXp, setLeaveXp] = useState('25');
+  const [leaveComments, setLeaveComments] = useState('');
+  const [submittingLeave, setSubmittingLeave] = useState(false);
 
   const loadStats = async () => {
     if (!profile?.id) return;
@@ -50,6 +64,54 @@ export default function ProfileScreen() {
     loadStats();
   }, [profile?.id]);
 
+  const handleApplyLeave = async () => {
+    if (!profile?.id || !profile?.house_id) return;
+
+    if (!leaveDuration.trim()) {
+      const msg = 'Please enter leave duration (e.g. Nov 5 - Nov 10).';
+      if (Platform.OS === 'web') alert(msg);
+      else Alert.alert('Required', msg);
+      return;
+    }
+
+    if (!leaveReason.trim()) {
+      const msg = 'Please enter reason for leave.';
+      if (Platform.OS === 'web') alert(msg);
+      else Alert.alert('Required', msg);
+      return;
+    }
+
+    setSubmittingLeave(true);
+    const res = await submitLeaveRequest({
+      userId: profile.id,
+      houseId: profile.house_id,
+      duration: leaveDuration,
+      startDate: leaveStartDate.trim() || undefined,
+      endDate: leaveEndDate.trim() || undefined,
+      reason: leaveReason,
+      requestedXp: Math.max(0, parseInt(leaveXp, 10) || 0),
+      comments: leaveComments,
+    });
+    setSubmittingLeave(false);
+
+    if (res.success) {
+      setLeaveModalVisible(false);
+      setLeaveDuration('');
+      setLeaveStartDate('');
+      setLeaveEndDate('');
+      setLeaveReason('');
+      setLeaveComments('');
+      const successMsg = 'Leave request submitted! It is now posted to the Live Feed. Once all roommates approve, your leave is granted and XP will be awarded.';
+      if (Platform.OS === 'web') alert(successMsg);
+      else Alert.alert('Request Sent 🌴', successMsg);
+      router.push('/(tabs)/feed');
+    } else {
+      const errMsg = res.error || 'Failed to submit leave request';
+      if (Platform.OS === 'web') alert(errMsg);
+      else Alert.alert('Error', errMsg);
+    }
+  };
+
   const handleSignOut = async () => {
     const performSignOut = async () => {
       try {
@@ -61,7 +123,10 @@ export default function ProfileScreen() {
     };
 
     if (Platform.OS === 'web') {
-      const confirmed = typeof window !== 'undefined' ? window.confirm('Are you sure you want to sign out?') : true;
+      const confirmed =
+        typeof window !== 'undefined'
+          ? window.confirm('Are you sure you want to sign out?')
+          : true;
       if (confirmed) {
         await performSignOut();
       }
@@ -77,26 +142,25 @@ export default function ProfileScreen() {
     <ScrollView
       style={styles.container}
       contentContainerStyle={styles.content}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />}
-      showsVerticalScrollIndicator={false}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[COLORS.primary]} />}
     >
       {/* Profile Header */}
       <View style={styles.profileHeader}>
         <View style={styles.avatarCircle}>
           <Text style={styles.avatarLarge}>{profile?.avatar_url || '🧑'}</Text>
         </View>
-        <Text style={styles.username}>{profile?.username}</Text>
-        <Text style={styles.phone}>{profile?.phone || 'Roommate'}</Text>
+        <Text style={styles.username}>{profile?.username || 'Roommate'}</Text>
+        {profile?.phone && <Text style={styles.phone}>{profile.phone}</Text>}
         <View style={styles.xpPill}>
-          <Ionicons name="flash" size={14} color="#FFF" />
-          <Text style={styles.xpPillText}>{profile?.xp ?? 0} Total XP Points</Text>
+          <Ionicons name="flash" size={12} color="#FFF" />
+          <Text style={styles.xpPillText}>{profile?.xp ?? 0} Total XP</Text>
         </View>
       </View>
 
-      {/* Simplified Stats (Clean XP & Chores, No Levels) */}
+      {/* Stats Cards */}
       <View style={styles.statsRow}>
         <View style={styles.statCard}>
-          <Ionicons name="flash-outline" size={22} color={COLORS.primary} />
+          <Ionicons name="trophy-outline" size={22} color={COLORS.primary} />
           <Text style={styles.statNum}>{profile?.xp ?? 0}</Text>
           <Text style={styles.statLbl}>Total XP</Text>
         </View>
@@ -137,6 +201,12 @@ export default function ProfileScreen() {
         ))}
       </View>
 
+      {/* Apply for Leave Button */}
+      <TouchableOpacity style={styles.leaveBtn} onPress={() => setLeaveModalVisible(true)}>
+        <Ionicons name="airplane-outline" size={18} color="#FFF" />
+        <Text style={styles.leaveBtnText}>Apply for Leave</Text>
+      </TouchableOpacity>
+
       {/* Admin Panel Button */}
       {profile?.is_admin && (
         <TouchableOpacity style={styles.adminBtn} onPress={() => router.push('/house/admin')}>
@@ -150,6 +220,112 @@ export default function ProfileScreen() {
         <Ionicons name="log-out-outline" size={18} color={COLORS.error} />
         <Text style={styles.signOutText}>Sign Out</Text>
       </TouchableOpacity>
+
+      {/* ─── Modal: Apply for Leave ─── */}
+      <Modal visible={leaveModalVisible} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <View style={styles.modalTitleRow}>
+                <Ionicons name="airplane" size={20} color={COLORS.primary} />
+                <Text style={styles.modalTitle}>Apply for Leave</Text>
+              </View>
+              <TouchableOpacity onPress={() => setLeaveModalVisible(false)}>
+                <Ionicons name="close" size={22} color={COLORS.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.modalSub}>
+              All roommates must approve your request in the Live Feed. Once approved, you'll be marked on leave in the leaderboard and awarded the requested XP.
+            </Text>
+
+            {/* Leave Duration */}
+            <Text style={styles.inputLabel}>Leave Duration *</Text>
+            <TextInput
+              style={styles.modalInput}
+              placeholder="e.g. Nov 5 - Nov 10 (5 days)"
+              placeholderTextColor={COLORS.textLight}
+              value={leaveDuration}
+              onChangeText={setLeaveDuration}
+            />
+
+            {/* Dates (Optional Range) */}
+            <View style={styles.dateRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.inputLabelSmall}>Start Date (YYYY-MM-DD)</Text>
+                <TextInput
+                  style={styles.modalInputSmall}
+                  placeholder="2026-11-05"
+                  placeholderTextColor={COLORS.textLight}
+                  value={leaveStartDate}
+                  onChangeText={setLeaveStartDate}
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.inputLabelSmall}>End Date (YYYY-MM-DD)</Text>
+                <TextInput
+                  style={styles.modalInputSmall}
+                  placeholder="2026-11-10"
+                  placeholderTextColor={COLORS.textLight}
+                  value={leaveEndDate}
+                  onChangeText={setLeaveEndDate}
+                />
+              </View>
+            </View>
+
+            {/* Reason for Leave */}
+            <Text style={styles.inputLabel}>Reason for Leave *</Text>
+            <TextInput
+              style={styles.modalInput}
+              placeholder="e.g. Visiting hometown / College exams"
+              placeholderTextColor={COLORS.textLight}
+              value={leaveReason}
+              onChangeText={setLeaveReason}
+            />
+
+            {/* Requesting XP Points */}
+            <Text style={styles.inputLabel}>Requesting XP Points</Text>
+            <TextInput
+              style={styles.modalInput}
+              placeholder="e.g. 25"
+              placeholderTextColor={COLORS.textLight}
+              keyboardType="number-pad"
+              value={leaveXp}
+              onChangeText={setLeaveXp}
+            />
+            <Text style={styles.helperText}>
+              XP points will be credited to you once all housemates approve.
+            </Text>
+
+            {/* Comments */}
+            <Text style={styles.inputLabel}>Comments / Note</Text>
+            <TextInput
+              style={[styles.modalInput, { height: 60, textAlignVertical: 'top' }]}
+              placeholder="e.g. Cleaned kitchen in advance; will resume chores on return"
+              placeholderTextColor={COLORS.textLight}
+              value={leaveComments}
+              onChangeText={setLeaveComments}
+              multiline
+            />
+
+            {/* Submit Button */}
+            <TouchableOpacity
+              style={[styles.submitLeaveBtn, submittingLeave && { opacity: 0.6 }]}
+              onPress={handleApplyLeave}
+              disabled={submittingLeave}
+            >
+              {submittingLeave ? (
+                <ActivityIndicator color="#FFF" size="small" />
+              ) : (
+                <>
+                  <Ionicons name="send" size={16} color="#FFF" />
+                  <Text style={styles.submitLeaveBtnText}>Submit Leave Request</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   );
 }
@@ -214,9 +390,9 @@ const styles = StyleSheet.create({
   },
   badgeLocked: { opacity: 0.5, backgroundColor: '#FAFAFA' },
   badgeIconBox: {
-    width: 32,
-    height: 32,
-    borderRadius: RADIUS.full,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     backgroundColor: '#E8F5E9',
     alignItems: 'center',
     justifyContent: 'center',
@@ -227,6 +403,21 @@ const styles = StyleSheet.create({
   badgeNameLocked: { color: '#A0A0B0' },
   earnedDot: { width: 5, height: 5, borderRadius: 2.5, backgroundColor: COLORS.success },
   lockedText: { fontSize: 8, color: '#A0A0B0', fontWeight: '500' },
+  leaveBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#0284C7',
+    borderRadius: RADIUS.sm,
+    paddingVertical: 10,
+    marginBottom: 8,
+    gap: 6,
+    shadowColor: '#0284C7',
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  leaveBtnText: { color: '#FFF', fontSize: 12, fontWeight: '700' },
   adminBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -250,4 +441,47 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   signOutText: { color: COLORS.error, fontSize: 12, fontWeight: '700' },
+
+  // Modal styles
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', padding: 14 },
+  modalCard: { backgroundColor: '#FFFFFF', borderRadius: RADIUS.md, padding: 16 },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
+  modalTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  modalTitle: { fontSize: 15, fontWeight: '800', color: '#1A1A24' },
+  modalSub: { fontSize: 10, color: '#7E7E8F', marginBottom: 10, lineHeight: 14 },
+  inputLabel: { fontSize: 9, fontWeight: '700', color: '#64748B', textTransform: 'uppercase', marginBottom: 3, marginTop: 6 },
+  inputLabelSmall: { fontSize: 8, fontWeight: '700', color: '#64748B', textTransform: 'uppercase', marginBottom: 2 },
+  modalInput: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    fontSize: 11,
+    color: '#1A1A24',
+  },
+  dateRow: { flexDirection: 'row', gap: 8, marginTop: 6 },
+  modalInputSmall: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    fontSize: 10,
+    color: '#1A1A24',
+  },
+  helperText: { fontSize: 9, color: '#94A3B8', marginTop: 2 },
+  submitLeaveBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#0284C7',
+    borderRadius: RADIUS.sm,
+    paddingVertical: 11,
+    marginTop: 14,
+    gap: 6,
+  },
+  submitLeaveBtnText: { color: '#FFF', fontSize: 12, fontWeight: '700' },
 });

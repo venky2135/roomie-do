@@ -25,6 +25,11 @@ import {
   toggleTaskLogReaction,
   TaskLogMetadata,
 } from '../../lib/taskWorkflow';
+import {
+  parseLeaveMetadata,
+  approveLeaveRequest,
+  deleteLeaveRequest,
+} from '../../lib/leaveWorkflow';
 
 const REACTION_EMOJIS = ['🙌', '🔥', '👏', '❤️', '⚡'];
 
@@ -42,6 +47,7 @@ interface FeedItem {
 export default function FeedScreen() {
   const { profile, refreshProfile } = useAuthStore();
   const [feed, setFeed] = useState<FeedItem[]>([]);
+  const [membersCount, setMembersCount] = useState(1);
   const [refreshing, setRefreshing] = useState(false);
 
   // Anonymous Feedback Modal State
@@ -58,6 +64,8 @@ export default function FeedScreen() {
         .eq('house_id', profile.house_id);
 
       const memberIds = memberProfiles?.map((m) => m.id) ?? [];
+      setMembersCount(memberIds.length);
+
       if (memberIds.length === 0) {
         setFeed([]);
         return;
@@ -163,6 +171,76 @@ export default function FeedScreen() {
     }
   };
 
+  const handleApproveLeave = async (logId: string) => {
+    if (!profile?.id || !profile?.house_id) return;
+
+    const doApprove = async () => {
+      const res = await approveLeaveRequest({
+        logId,
+        approverUserId: profile.id,
+        approverUsername: profile.username,
+        houseId: profile.house_id!,
+      });
+
+      if (res.success) {
+        if (res.isFullyApproved) {
+          const msg = 'Leave approved! All roommates have approved this request and XP points have been awarded.';
+          if (Platform.OS === 'web') alert(msg);
+          else Alert.alert('Fully Approved! 🎉', msg);
+        } else {
+          const msg = 'You approved this leave request. Waiting for remaining roommates to approve.';
+          if (Platform.OS === 'web') alert(msg);
+          else Alert.alert('Approved 👍', msg);
+        }
+        await loadFeed();
+        refreshProfile();
+      } else {
+        const err = res.error || 'Failed to approve leave request';
+        if (Platform.OS === 'web') alert(err);
+        else Alert.alert('Notice', err);
+        await loadFeed();
+      }
+    };
+
+    if (Platform.OS === 'web') {
+      if (typeof window !== 'undefined' && window.confirm('Approve this leave request for your roommate?')) {
+        await doApprove();
+      }
+    } else {
+      Alert.alert('Approve Leave', 'Approve this leave request for your roommate?', [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Approve', onPress: doApprove },
+      ]);
+    }
+  };
+
+  const handleDeleteLeave = async (logId: string) => {
+    if (!profile?.id) return;
+
+    const doDelete = async () => {
+      // Optimistic delete
+      setFeed((prev) => prev.filter((item) => item.id !== logId));
+      const res = await deleteLeaveRequest(logId, profile.id);
+      if (!res.success) {
+        const err = res.error || 'Failed to delete leave request';
+        if (Platform.OS === 'web') alert(err);
+        else Alert.alert('Error', err);
+        await loadFeed();
+      }
+    };
+
+    if (Platform.OS === 'web') {
+      if (typeof window !== 'undefined' && window.confirm('Delete this leave request?')) {
+        await doDelete();
+      }
+    } else {
+      Alert.alert('Delete Leave Request', 'Are you sure you want to delete your leave request?', [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: doDelete },
+      ]);
+    }
+  };
+
   const handleSendFeedback = async () => {
     if (!feedbackLogId || !feedbackText.trim()) return;
     const textToSend = feedbackText.trim();
@@ -198,41 +276,46 @@ export default function FeedScreen() {
     setSubmittingFeedback(false);
 
     if (!res.success) {
-      Alert.alert('Notice', res.error || 'Failed to post feedback.');
-    } else {
-      loadFeed();
+      if (Platform.OS === 'web') {
+        alert(res.error || 'Failed to submit feedback.');
+      } else {
+        Alert.alert('Error', res.error || 'Failed to submit feedback.');
+      }
+      await loadFeed();
     }
   };
 
   const handleEmojiReaction = async (logId: string, emoji: string) => {
     if (!profile?.id) return;
-    const myId = profile.id;
 
-    // Optimistically toggle reaction locally
+    // Optimistic toggle
     setFeed((prevFeed) =>
-      prevFeed.map((log) => {
-        if (log.id !== logId) return log;
-        const currentMeta = parseLogNotes(log.notes);
-        const reactions: Record<string, string[]> = { ...(currentMeta.reactions || {}) };
-        const users = reactions[emoji] || [];
+      prevFeed.map((item) => {
+        if (item.id === logId) {
+          const currentMeta = parseLogNotes(item.notes);
+          const currentReactions = { ...(currentMeta.reactions || {}) };
+          const userList = currentReactions[emoji] || [];
 
-        let newUsers: string[];
-        if (users.includes(myId)) {
-          newUsers = users.filter((id) => id !== myId);
-        } else {
-          newUsers = [...users, myId];
+          if (userList.includes(profile.id)) {
+            currentReactions[emoji] = userList.filter((uid) => uid !== profile.id);
+          } else {
+            currentReactions[emoji] = [...userList, profile.id];
+          }
+
+          const updatedMeta: TaskLogMetadata = {
+            ...currentMeta,
+            reactions: currentReactions,
+          };
+          return { ...item, notes: encodeLogNotes(updatedMeta) };
         }
-        reactions[emoji] = newUsers;
-
-        const updatedMeta: TaskLogMetadata = {
-          ...currentMeta,
-          reactions,
-        };
-        return { ...log, notes: encodeLogNotes(updatedMeta) };
+        return item;
       })
     );
 
-    await toggleTaskLogReaction(logId, emoji, myId);
+    const res = await toggleTaskLogReaction(logId, profile.id, emoji);
+    if (!res.success) {
+      await loadFeed();
+    }
   };
 
   const timeAgo = (dateStr: string) => {
@@ -260,11 +343,119 @@ export default function FeedScreen() {
         ListEmptyComponent={
           <View style={styles.emptyCard}>
             <Ionicons name="chatbubbles-outline" size={48} color={COLORS.textLight} />
-            <Text style={styles.emptyTitle}>No chore logs yet</Text>
-            <Text style={styles.emptySub}>Log chores or claim tasks in Marketplace to populate the feed!</Text>
+            <Text style={styles.emptyTitle}>No activity logs yet</Text>
+            <Text style={styles.emptySub}>Log chores, claim tasks, or apply for leave to populate the feed!</Text>
           </View>
         }
         renderItem={({ item }) => {
+          // Check if item is a Leave Request
+          const leaveMeta = parseLeaveMetadata(item.notes);
+
+          if (leaveMeta) {
+            const isMine = item.user_id === profile?.id;
+            const isApproved = leaveMeta.status === 'approved';
+            const totalNeeded = Math.max(1, membersCount - 1);
+            const approvedCount = leaveMeta.approvals.length;
+            const hasApproved = profile?.id ? leaveMeta.approvals.includes(profile.id) : false;
+
+            return (
+              <View style={[styles.card, styles.leaveCard, isApproved && styles.leaveCardApproved]}>
+                {/* Leave Card Header */}
+                <View style={styles.cardHeader}>
+                  <Text style={styles.avatar}>{item.profiles?.avatar_url || '🧑'}</Text>
+                  <View style={styles.headerInfo}>
+                    <View style={styles.usernameRow}>
+                      <Text style={styles.username}>{item.profiles?.username || 'Roommate'}</Text>
+                      <View style={styles.leavePillTag}>
+                        <Ionicons name="airplane" size={10} color="#0284C7" />
+                        <Text style={styles.leavePillText}>LEAVE REQUEST</Text>
+                      </View>
+                    </View>
+                    <Text style={styles.time}>{timeAgo(item.completed_at)}</Text>
+                  </View>
+                  <View style={[styles.creditsPill, styles.leaveCreditsPill]}>
+                    <Ionicons name="flash" size={12} color="#0284C7" />
+                    <Text style={[styles.creditsText, { color: '#0284C7' }]}>
+                      {isApproved ? `+${leaveMeta.requestedXp} XP awarded` : `+${leaveMeta.requestedXp} XP requested`}
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Leave Details Box */}
+                <View style={styles.leaveDetailsBox}>
+                  <View style={styles.leaveDetailRow}>
+                    <Ionicons name="calendar-outline" size={13} color="#0284C7" />
+                    <Text style={styles.leaveDetailLabel}>Duration:</Text>
+                    <Text style={styles.leaveDetailValue}>{leaveMeta.duration}</Text>
+                  </View>
+                  <View style={styles.leaveDetailRow}>
+                    <Ionicons name="document-text-outline" size={13} color="#64748B" />
+                    <Text style={styles.leaveDetailLabel}>Reason:</Text>
+                    <Text style={styles.leaveDetailValue}>{leaveMeta.reason}</Text>
+                  </View>
+                  {leaveMeta.comments ? (
+                    <View style={styles.leaveDetailRow}>
+                      <Ionicons name="chatbubble-ellipses-outline" size={13} color="#64748B" />
+                      <Text style={styles.leaveDetailLabel}>Comments:</Text>
+                      <Text style={styles.leaveDetailValue} numberOfLines={2}>
+                        "{leaveMeta.comments}"
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
+
+                {/* Status & Approvals Section */}
+                <View style={styles.leaveStatusSection}>
+                  {isApproved ? (
+                    <View style={styles.leaveApprovedRow}>
+                      <Ionicons name="checkmark-circle" size={15} color={COLORS.success} />
+                      <Text style={styles.leaveApprovedText}>
+                        Approved by all roommates (+{leaveMeta.requestedXp} XP awarded)
+                      </Text>
+                    </View>
+                  ) : (
+                    <View style={styles.leavePendingRow}>
+                      <View style={styles.pendingBadge}>
+                        <Ionicons name="time" size={12} color="#D97706" />
+                        <Text style={styles.pendingText}>
+                          Approved by {approvedCount} of {totalNeeded} roommates
+                        </Text>
+                      </View>
+                      {!isMine && (
+                        hasApproved ? (
+                          <View style={styles.alreadyApprovedBadge}>
+                            <Ionicons name="checkmark" size={12} color={COLORS.success} />
+                            <Text style={styles.alreadyApprovedText}>You approved</Text>
+                          </View>
+                        ) : (
+                          <TouchableOpacity
+                            style={styles.approveLeaveBtn}
+                            onPress={() => handleApproveLeave(item.id)}
+                          >
+                            <Ionicons name="checkmark-circle" size={14} color="#FFF" />
+                            <Text style={styles.verifyBtnText}>Approve Leave</Text>
+                          </TouchableOpacity>
+                        )
+                      )}
+                    </View>
+                  )}
+
+                  {/* Delete option for the requester */}
+                  {isMine && (
+                    <TouchableOpacity
+                      style={styles.deleteLeaveBtn}
+                      onPress={() => handleDeleteLeave(item.id)}
+                    >
+                      <Ionicons name="trash-outline" size={12} color={COLORS.error} />
+                      <Text style={styles.deleteLeaveBtnText}>Delete Request</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </View>
+            );
+          }
+
+          // Regular Chore Log Card
           const meta: TaskLogMetadata = parseLogNotes(item.notes);
           const isPending = meta.status === 'pending_verification';
           const isMine = item.user_id === profile?.id;
@@ -362,7 +553,7 @@ export default function FeedScreen() {
                 </View>
               )}
 
-              {/* Card Footer: 5 Reaction Emojis & Anonymous Feedback Button (High Five removed) */}
+              {/* Card Footer: 5 Reaction Emojis & Anonymous Feedback Button */}
               <View style={styles.cardBottomRow}>
                 {/* 5 Emojis with Live Counts & Member Highlights */}
                 <View style={styles.reactionsBar}>
@@ -379,11 +570,15 @@ export default function FeedScreen() {
                           hasReacted && styles.reactionBtnActive,
                         ]}
                         onPress={() => handleEmojiReaction(item.id, emoji)}
-                        activeOpacity={0.7}
                       >
                         <Text style={styles.reactionEmoji}>{emoji}</Text>
                         {count > 0 && (
-                          <Text style={[styles.reactionCount, hasReacted && styles.reactionCountActive]}>
+                          <Text
+                            style={[
+                              styles.reactionCount,
+                              hasReacted && styles.reactionCountActive,
+                            ]}
+                          >
                             {count}
                           </Text>
                         )}
@@ -412,11 +607,11 @@ export default function FeedScreen() {
           <View style={styles.modalCard}>
             <View style={styles.modalHeader}>
               <View style={styles.modalTitleRow}>
-                <Ionicons name="shield-checkmark-outline" size={20} color={COLORS.primary} />
+                <Ionicons name="eye-off" size={16} color={COLORS.primary} />
                 <Text style={styles.modalTitle}>Leave Anonymous Feedback</Text>
               </View>
               <TouchableOpacity onPress={() => setFeedbackLogId(null)}>
-                <Ionicons name="close" size={24} color={COLORS.textSecondary} />
+                <Ionicons name="close" size={20} color={COLORS.textSecondary} />
               </TouchableOpacity>
             </View>
 
@@ -426,12 +621,12 @@ export default function FeedScreen() {
 
             <TextInput
               style={styles.feedbackInput}
-              placeholder="e.g. Thanks for cleaning the microwave! Looks great."
+              placeholder="e.g. Thanks! Next time remember to empty the lint filter."
               placeholderTextColor={COLORS.textLight}
               value={feedbackText}
               onChangeText={setFeedbackText}
               multiline
-              autoFocus
+              maxLength={200}
             />
 
             <TouchableOpacity
@@ -439,7 +634,7 @@ export default function FeedScreen() {
               onPress={handleSendFeedback}
               disabled={submittingFeedback}
             >
-              <Ionicons name="paper-plane-outline" size={18} color="#FFF" />
+              <Ionicons name="send" size={14} color="#FFF" />
               <Text style={styles.submitFeedbackText}>
                 {submittingFeedback ? 'Posting...' : 'Post Anonymous Feedback'}
               </Text>
@@ -453,96 +648,115 @@ export default function FeedScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F8F9FA', paddingTop: 44, paddingHorizontal: 12 },
-  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 },
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 },
   title: { fontSize: 16, fontWeight: '800', color: '#1A1A24' },
   emptyCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: RADIUS.sm,
     padding: 24,
     alignItems: 'center',
-    marginTop: 16,
+    marginTop: 20,
     borderWidth: 1,
     borderColor: '#ECECEC',
   },
-  emptyTitle: { fontSize: 13, fontWeight: '700', color: '#1A1A24', marginTop: 6 },
-  emptySub: { fontSize: 11, color: '#7E7E8F', textAlign: 'center', marginTop: 3 },
+  emptyTitle: { fontSize: 14, fontWeight: '700', color: '#1A1A24', marginTop: 8 },
+  emptySub: { fontSize: 11, color: '#7E7E8F', textAlign: 'center', marginTop: 4, lineHeight: 16 },
   card: {
     backgroundColor: '#FFFFFF',
     borderRadius: RADIUS.sm,
     padding: 10,
     marginBottom: 8,
     borderWidth: 1,
-    borderColor: '#ECECEC',
+    borderColor: '#EFEFEF',
   },
   cardHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
   avatar: { fontSize: 24, marginRight: 8 },
   headerInfo: { flex: 1 },
+  usernameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
   username: { fontSize: 12, fontWeight: '700', color: '#1A1A24' },
-  time: { fontSize: 10, color: '#9090A0' },
+  time: { fontSize: 9, color: '#7E7E8F', marginTop: 1 },
   creditsPill: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#E8F5E9',
     paddingHorizontal: 7,
-    paddingVertical: 3,
+    paddingVertical: 2,
     borderRadius: RADIUS.full,
-    gap: 3,
+    gap: 2,
   },
-  creditsPillPending: { backgroundColor: '#FFF4E5' },
-  creditsText: { fontSize: 10, fontWeight: '800', color: COLORS.primary },
-  taskRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
+  creditsPillPending: {
+    backgroundColor: '#FFFBEB',
+  },
+  creditsText: { color: COLORS.primary, fontWeight: '800', fontSize: 10 },
+  taskRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
   iconBox: {
-    width: 26,
-    height: 26,
-    borderRadius: 5,
-    backgroundColor: '#E8F5E9',
+    width: 28,
+    height: 28,
+    borderRadius: 6,
+    backgroundColor: '#F3F8F5',
     alignItems: 'center',
     justifyContent: 'center',
+    marginRight: 8,
   },
   taskName: { fontSize: 12, fontWeight: '700', color: '#1A1A24' },
   noteBox: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 4,
-    backgroundColor: '#F9F9FB',
+    alignItems: 'center',
+    backgroundColor: '#F8F9FA',
     padding: 6,
     borderRadius: 4,
-    marginBottom: 4,
+    marginBottom: 6,
+    gap: 4,
   },
-  noteText: { fontSize: 11, color: '#4A4A5A', flex: 1 },
-  photoContainer: { position: 'relative', marginTop: 4, marginBottom: 6, borderRadius: 6, overflow: 'hidden' },
-  photoProof: { width: '100%', height: 150, borderRadius: 6 },
+  noteText: { fontSize: 10, color: '#4B4B58', flex: 1, fontStyle: 'italic' },
+  photoContainer: {
+    position: 'relative',
+    borderRadius: 6,
+    overflow: 'hidden',
+    marginBottom: 6,
+  },
+  photoProof: {
+    width: '100%',
+    height: 140,
+    borderRadius: 6,
+    backgroundColor: '#F0F0F2',
+  },
   photoBadge: {
     position: 'absolute',
     top: 6,
     left: 6,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.6)',
+    backgroundColor: 'rgba(0,0,0,0.65)',
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: RADIUS.full,
     gap: 3,
   },
-  photoBadgeText: { color: '#FFF', fontSize: 9, fontWeight: '700' },
+  photoBadgeText: { fontSize: 9, color: '#FFF', fontWeight: '700' },
   verificationSection: {
-    marginTop: 2,
-    marginBottom: 6,
-    paddingTop: 6,
     borderTopWidth: 1,
-    borderTopColor: '#F0F0F2',
+    borderTopColor: '#F5F5F7',
+    paddingTop: 6,
+    marginBottom: 4,
   },
-  pendingVerifyRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  pendingVerifyRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 8,
+  },
   pendingBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFF4E5',
-    paddingHorizontal: 7,
-    paddingVertical: 3,
+    backgroundColor: '#FFFBEB',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
     borderRadius: RADIUS.full,
-    gap: 3,
+    gap: 4,
+    alignSelf: 'flex-start',
   },
-  pendingText: { fontSize: 10, fontWeight: '700', color: COLORS.accent },
+  pendingText: { fontSize: 10, color: '#D97706', fontWeight: '700' },
   verifyBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -552,9 +766,9 @@ const styles = StyleSheet.create({
     borderRadius: RADIUS.full,
     gap: 3,
   },
-  verifyBtnText: { color: '#FFF', fontSize: 10, fontWeight: '800' },
+  verifyBtnText: { color: '#FFF', fontSize: 10, fontWeight: '700' },
   verifiedRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  verifiedText: { fontSize: 10, fontWeight: '600', color: COLORS.success },
+  verifiedText: { fontSize: 10, color: COLORS.success, fontWeight: '700' },
   floatingFeedbackWrapper: {
     marginVertical: 4,
     gap: 4,
@@ -663,4 +877,115 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   submitFeedbackText: { color: '#FFF', fontSize: 11, fontWeight: '700' },
+
+  // Leave Request Specific Card Styles
+  leaveCard: {
+    borderColor: '#BAE6FD',
+    backgroundColor: '#F0F9FF',
+  },
+  leaveCardApproved: {
+    borderColor: '#BBF7D0',
+    backgroundColor: '#F0FDF4',
+  },
+  leavePillTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#E0F2FE',
+    paddingHorizontal: 6,
+    paddingVertical: 1.5,
+    borderRadius: RADIUS.full,
+    gap: 3,
+  },
+  leavePillText: { fontSize: 8, fontWeight: '800', color: '#0284C7' },
+  leaveCreditsPill: {
+    backgroundColor: '#E0F2FE',
+  },
+  leaveDetailsBox: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 6,
+    padding: 8,
+    marginVertical: 6,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    gap: 4,
+  },
+  leaveDetailRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  leaveDetailLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  leaveDetailValue: {
+    fontSize: 10,
+    color: '#0F172A',
+    fontWeight: '600',
+    flex: 1,
+  },
+  leaveStatusSection: {
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+    paddingTop: 6,
+    gap: 6,
+  },
+  leaveApprovedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  leaveApprovedText: {
+    fontSize: 10,
+    color: COLORS.success,
+    fontWeight: '800',
+  },
+  leavePendingRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 8,
+  },
+  approveLeaveBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0284C7',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: RADIUS.full,
+    gap: 3,
+  },
+  alreadyApprovedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: RADIUS.full,
+    gap: 2,
+  },
+  alreadyApprovedText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: COLORS.success,
+  },
+  deleteLeaveBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-end',
+    backgroundColor: '#FFF1F2',
+    borderWidth: 1,
+    borderColor: '#FECDD3',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: RADIUS.full,
+    gap: 3,
+    marginTop: 2,
+  },
+  deleteLeaveBtnText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: COLORS.error,
+  },
 });

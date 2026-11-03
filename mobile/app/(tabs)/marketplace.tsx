@@ -280,7 +280,6 @@ export default function MarketplaceScreen() {
                 <View style={styles.cardTop}>
                   <View style={styles.titleArea}>
                     <Text style={styles.cardTitle}>{item.title}</Text>
-                    <Text style={styles.cardBy}>Posted by {item.createdByName}</Text>
                   </View>
                   <View style={styles.bountyBadge}>
                     <Ionicons name="flash" size={10} color={COLORS.primary} />
