@@ -12,6 +12,7 @@ import {
   RefreshControl,
   Image,
   ScrollView,
+  Platform,
 } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useAuthStore } from '../../store/useAuthStore';
@@ -122,21 +123,56 @@ export default function MarketplaceScreen() {
   };
 
   const handleClaim = async (task: MarketplaceTask) => {
-    Alert.alert('Claim Chore', `Claim "${task.title}" for ${task.bountyXp} XP?`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Claim',
-        onPress: async () => {
-          const res = await claimMarketplaceTask(task.id, profile!.id, profile!.username);
-          if (res.success) {
-            Alert.alert('Claimed', 'Task claimed! Submit proof once done to get verified.');
-            loadData();
-          } else {
-            Alert.alert('Error', res.error || 'Failed to claim task.');
-          }
-        },
-      },
-    ]);
+    if (!profile?.id) return;
+
+    const executeClaim = async () => {
+      // Optimistically update state so the card immediately shows "Claimed by You"
+      setTasks((prev) =>
+        prev.map((t) =>
+          t.id === task.id
+            ? {
+                ...t,
+                status: 'claimed',
+                claimedBy: profile.id,
+                claimedByName: profile.username,
+              }
+            : t
+        )
+      );
+
+      const res = await claimMarketplaceTask(task.id, profile.id, profile.username);
+      if (res.success) {
+        if (Platform.OS === 'web') {
+          // Native browser alert
+          alert(`Claimed "${task.title}"! Tap 'Submit Proof' when you finish.`);
+        } else {
+          Alert.alert('Claimed', 'Task claimed! Submit proof once done to get verified.');
+        }
+        loadData();
+      } else {
+        if (Platform.OS === 'web') {
+          alert(res.error || 'Failed to claim task.');
+        } else {
+          Alert.alert('Error', res.error || 'Failed to claim task.');
+        }
+        loadData();
+      }
+    };
+
+    if (Platform.OS === 'web') {
+      const confirmed =
+        typeof window !== 'undefined'
+          ? window.confirm(`Claim "${task.title}" for ${task.bountyXp} XP?`)
+          : true;
+      if (confirmed) {
+        await executeClaim();
+      }
+    } else {
+      Alert.alert('Claim Chore', `Claim "${task.title}" for ${task.bountyXp} XP?`, [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Claim', onPress: executeClaim },
+      ]);
+    }
   };
 
   const handlePickPhoto = async (fromCamera: boolean) => {
@@ -165,14 +201,22 @@ export default function MarketplaceScreen() {
     setSubmittingComplete(false);
 
     if (res.success) {
-      Alert.alert('Submitted', 'Submitted for roommate verification. XP awarded upon approval.');
+      if (Platform.OS === 'web') {
+        alert('Submitted for roommate verification! XP will be awarded upon approval.');
+      } else {
+        Alert.alert('Submitted', 'Submitted for roommate verification. XP awarded upon approval.');
+      }
       setCompletingTask(null);
       setCompleteNotes('');
       setCompletePhotoUri(null);
       loadData();
       refreshProfile();
     } else {
-      Alert.alert('Error', res.error || 'Failed to complete task.');
+      if (Platform.OS === 'web') {
+        alert(res.error || 'Failed to complete task.');
+      } else {
+        Alert.alert('Error', res.error || 'Failed to complete task.');
+      }
     }
   };
 
@@ -268,8 +312,9 @@ export default function MarketplaceScreen() {
                     </Text>
                   </View>
 
-                  {isOpen && !isCreator && (
+                  {isOpen && (
                     <TouchableOpacity style={styles.claimPill} onPress={() => handleClaim(item)}>
+                      <Ionicons name="hand-right-outline" size={11} color="#FFF" style={{ marginRight: 2 }} />
                       <Text style={styles.claimPillText}>Claim</Text>
                     </TouchableOpacity>
                   )}
@@ -507,10 +552,12 @@ const styles = StyleSheet.create({
   statusBox: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   statusLabel: { fontSize: 10, color: '#7E7E8F', fontWeight: '500' },
   claimPill: {
-    backgroundColor: COLORS.accent,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.primary,
     paddingHorizontal: 10,
     paddingVertical: 4,
-    borderRadius: RADIUS.sm,
+    borderRadius: RADIUS.full,
   },
   claimPillText: { color: '#FFF', fontSize: 10, fontWeight: '700' },
   completePill: {
