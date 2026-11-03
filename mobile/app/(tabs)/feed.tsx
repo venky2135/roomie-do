@@ -13,16 +13,19 @@ import {
 } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { supabase } from '../../lib/supabase';
-import { sendNudge } from '../../lib/api';
 import { useAuthStore } from '../../store/useAuthStore';
 import { COLORS, FONTS, SPACING, RADIUS } from '../../constants/theme';
 import AppIcon from '../../components/AppIcon';
 import {
   parseLogNotes,
+  encodeLogNotes,
   verifyTaskLog,
   addAnonymousFeedback,
+  toggleTaskLogReaction,
   TaskLogMetadata,
 } from '../../lib/taskWorkflow';
+
+const REACTION_EMOJIS = ['🙌', '🔥', '👏', '❤️', '⚡'];
 
 interface FeedItem {
   id: string;
@@ -39,7 +42,6 @@ export default function FeedScreen() {
   const { profile } = useAuthStore();
   const [feed, setFeed] = useState<FeedItem[]>([]);
   const [refreshing, setRefreshing] = useState(false);
-  const [reactions, setReactions] = useState<Record<string, string[]>>({});
 
   // Anonymous Feedback Modal State
   const [feedbackLogId, setFeedbackLogId] = useState<string | null>(null);
@@ -106,24 +108,74 @@ export default function FeedScreen() {
 
   const handleSendFeedback = async () => {
     if (!feedbackLogId || !feedbackText.trim()) return;
+    const textToSend = feedbackText.trim();
+    const logId = feedbackLogId;
     setSubmittingFeedback(true);
-    const res = await addAnonymousFeedback(feedbackLogId, feedbackText.trim());
+
+    const tempFeedback = {
+      id: Math.random().toString(36).slice(2, 9),
+      text: textToSend,
+      createdAt: new Date().toISOString(),
+      isAnonymous: true,
+    };
+
+    // Optimistically reflect immediately on the chore card as floating badge
+    setFeed((prevFeed) =>
+      prevFeed.map((item) => {
+        if (item.id === logId) {
+          const currentMeta = parseLogNotes(item.notes);
+          const updatedMeta: TaskLogMetadata = {
+            ...currentMeta,
+            feedbacks: [...(currentMeta.feedbacks || []), tempFeedback],
+          };
+          return { ...item, notes: encodeLogNotes(updatedMeta) };
+        }
+        return item;
+      })
+    );
+
+    setFeedbackText('');
+    setFeedbackLogId(null);
+
+    const res = await addAnonymousFeedback(logId, textToSend);
     setSubmittingFeedback(false);
 
-    if (res.success) {
-      setFeedbackText('');
-      setFeedbackLogId(null);
-      loadFeed();
+    if (!res.success) {
+      Alert.alert('Notice', res.error || 'Failed to post feedback.');
     } else {
-      Alert.alert('Error', res.error || 'Failed to post feedback.');
+      loadFeed();
     }
   };
 
-  const handleReaction = (logId: string, iconKey: string) => {
-    setReactions((prev) => ({
-      ...prev,
-      [logId]: [...(prev[logId] ?? []), iconKey],
-    }));
+  const handleEmojiReaction = async (logId: string, emoji: string) => {
+    if (!profile?.id) return;
+    const myId = profile.id;
+
+    // Optimistically toggle reaction locally
+    setFeed((prevFeed) =>
+      prevFeed.map((log) => {
+        if (log.id !== logId) return log;
+        const currentMeta = parseLogNotes(log.notes);
+        const reactions: Record<string, string[]> = { ...(currentMeta.reactions || {}) };
+        const users = reactions[emoji] || [];
+
+        let newUsers: string[];
+        if (users.includes(myId)) {
+          newUsers = users.filter((id) => id !== myId);
+        } else {
+          newUsers = [...users, myId];
+        }
+        reactions[emoji] = newUsers;
+
+        const updatedMeta: TaskLogMetadata = {
+          ...currentMeta,
+          reactions,
+        };
+        return { ...log, notes: encodeLogNotes(updatedMeta) };
+      })
+    );
+
+    await toggleTaskLogReaction(logId, emoji, myId);
   };
 
   const timeAgo = (dateStr: string) => {
@@ -236,45 +288,62 @@ export default function FeedScreen() {
                 )}
               </View>
 
-              {/* Anonymous Feedbacks */}
+              {/* Floating Anonymous Feedback Badges */}
               {meta.feedbacks && meta.feedbacks.length > 0 && (
-                <View style={styles.feedbackList}>
+                <View style={styles.floatingFeedbackWrapper}>
                   {meta.feedbacks.map((fb) => (
-                    <View key={fb.id} style={styles.feedbackItem}>
-                      <View style={styles.feedbackHeader}>
-                        <Ionicons name="person-circle-outline" size={14} color={COLORS.textSecondary} />
-                        <Text style={styles.anonLabel}>Anonymous Roommate</Text>
-                        <Text style={styles.feedbackTime}>{timeAgo(fb.createdAt)}</Text>
+                    <View key={fb.id} style={styles.floatingFeedbackBadge}>
+                      <View style={styles.floatingTag}>
+                        <Ionicons name="eye-off" size={10} color="#FFF" />
+                        <Text style={styles.floatingTagText}>Anonymous</Text>
                       </View>
-                      <Text style={styles.feedbackText}>{fb.text}</Text>
+                      <Text style={styles.floatingFeedbackQuote} numberOfLines={2}>
+                        "{fb.text}"
+                      </Text>
+                      <Text style={styles.floatingFeedbackTime}>{timeAgo(fb.createdAt)}</Text>
                     </View>
                   ))}
                 </View>
               )}
 
-              {/* Action Buttons: Anonymous Feedback & Nudge */}
-              <View style={styles.footerRow}>
+              {/* Card Footer: 5 Reaction Emojis & Anonymous Feedback Button (High Five removed) */}
+              <View style={styles.cardBottomRow}>
+                {/* 5 Emojis with Live Counts & Member Highlights */}
+                <View style={styles.reactionsBar}>
+                  {REACTION_EMOJIS.map((emoji) => {
+                    const userIds = meta.reactions?.[emoji] || [];
+                    const count = userIds.length;
+                    const hasReacted = profile?.id ? userIds.includes(profile.id) : false;
+
+                    return (
+                      <TouchableOpacity
+                        key={emoji}
+                        style={[
+                          styles.reactionBtn,
+                          hasReacted && styles.reactionBtnActive,
+                        ]}
+                        onPress={() => handleEmojiReaction(item.id, emoji)}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.reactionEmoji}>{emoji}</Text>
+                        {count > 0 && (
+                          <Text style={[styles.reactionCount, hasReacted && styles.reactionCountActive]}>
+                            {count}
+                          </Text>
+                        )}
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+
+                {/* Anonymous Feedback Button */}
                 <TouchableOpacity
-                  style={styles.actionPill}
+                  style={styles.anonActionBtn}
                   onPress={() => setFeedbackLogId(item.id)}
                 >
-                  <Ionicons name="chatbox-ellipses-outline" size={14} color={COLORS.primary} />
-                  <Text style={styles.actionPillText}>Anonymous Feedback</Text>
+                  <Ionicons name="chatbubble-ellipses-outline" size={12} color={COLORS.primary} />
+                  <Text style={styles.anonActionText}>Feedback</Text>
                 </TouchableOpacity>
-
-                {/* Nudge if other member */}
-                {item.user_id !== profile?.id && (
-                  <TouchableOpacity
-                    style={styles.actionPillSecondary}
-                    onPress={() => {
-                      sendNudge(item.user_id).catch(() => {});
-                      Alert.alert('Nudge Sent! 👋', `Sent a high-five to ${item.profiles?.username}.`);
-                    }}
-                  >
-                    <Ionicons name="hand-right-outline" size={14} color={COLORS.textSecondary} />
-                    <Text style={styles.actionPillSecondaryText}>High Five</Text>
-                  </TouchableOpacity>
-                )}
               </View>
             </View>
           );
@@ -430,35 +499,88 @@ const styles = StyleSheet.create({
   verifyBtnText: { color: '#FFF', fontSize: 10, fontWeight: '800' },
   verifiedRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   verifiedText: { fontSize: 10, fontWeight: '600', color: COLORS.success },
-  feedbackList: { backgroundColor: '#F9F9FB', borderRadius: 4, padding: 6, marginBottom: 6 },
-  feedbackItem: { marginBottom: 4 },
-  feedbackHeader: { flexDirection: 'row', alignItems: 'center', gap: 3, marginBottom: 1 },
-  anonLabel: { fontSize: 9, fontWeight: '700', color: '#7E7E8F' },
-  feedbackTime: { fontSize: 8, color: '#A0A0B0', marginLeft: 'auto' },
-  feedbackText: { fontSize: 11, color: '#1A1A24', paddingLeft: 12 },
-  footerRow: { flexDirection: 'row', gap: 6, marginTop: 2 },
-  actionPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#E8F5E9',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: RADIUS.full,
-    gap: 3,
+  floatingFeedbackWrapper: {
+    marginVertical: 4,
+    gap: 4,
   },
-  actionPillText: { fontSize: 10, fontWeight: '700', color: COLORS.primary },
-  actionPillSecondary: {
+  floatingFeedbackBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#F0FDF4',
     borderWidth: 1,
-    borderColor: '#ECECEC',
+    borderColor: '#BBF7D0',
+    borderRadius: RADIUS.full,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    gap: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  floatingTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.primary,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: RADIUS.full,
+    gap: 2,
+  },
+  floatingTagText: { fontSize: 8, fontWeight: '800', color: '#FFF' },
+  floatingFeedbackQuote: {
+    fontSize: 10,
+    color: '#1E293B',
+    fontWeight: '600',
+    flex: 1,
+    fontStyle: 'italic',
+  },
+  floatingFeedbackTime: { fontSize: 8, color: '#94A3B8' },
+  cardBottomRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 6,
+    paddingTop: 6,
+    borderTopWidth: 1,
+    borderTopColor: '#F0F0F2',
+  },
+  reactionsBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  reactionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8F9FA',
+    borderWidth: 1,
+    borderColor: '#EFEFEF',
+    borderRadius: RADIUS.full,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    gap: 2,
+  },
+  reactionBtnActive: {
+    backgroundColor: '#E8F5E9',
+    borderColor: COLORS.primary,
+  },
+  reactionEmoji: { fontSize: 13 },
+  reactionCount: { fontSize: 10, fontWeight: '700', color: '#7E7E8F' },
+  reactionCountActive: { color: COLORS.primary, fontWeight: '800' },
+  anonActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#DCFCE7',
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: RADIUS.full,
     gap: 3,
   },
-  actionPillSecondaryText: { fontSize: 10, fontWeight: '600', color: '#7E7E8F' },
+  anonActionText: { fontSize: 10, fontWeight: '700', color: COLORS.primary },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', padding: 16 },
   modalCard: { backgroundColor: '#FFFFFF', borderRadius: RADIUS.sm, padding: 14 },
   modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },

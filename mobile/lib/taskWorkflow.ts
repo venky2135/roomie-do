@@ -12,6 +12,7 @@ export interface TaskLogMetadata {
     createdAt: string;
     isAnonymous: boolean;
   }>;
+  reactions?: Record<string, string[]>; // emoji -> array of user_ids who reacted
 }
 
 export function parseLogNotes(notesRaw: string | null | undefined): TaskLogMetadata {
@@ -20,12 +21,17 @@ export function parseLogNotes(notesRaw: string | null | undefined): TaskLogMetad
       note: '',
       status: 'completed', // legacy logs without metadata are treated as completed
       feedbacks: [],
+      reactions: {},
     };
   }
 
   try {
     const parsed = JSON.parse(notesRaw);
-    if (typeof parsed === 'object' && parsed !== null && ('status' in parsed || 'feedbacks' in parsed)) {
+    if (
+      typeof parsed === 'object' &&
+      parsed !== null &&
+      ('status' in parsed || 'feedbacks' in parsed || 'reactions' in parsed)
+    ) {
       return {
         note: parsed.note || '',
         status: parsed.status || 'completed',
@@ -33,6 +39,7 @@ export function parseLogNotes(notesRaw: string | null | undefined): TaskLogMetad
         verifiedByName: parsed.verifiedByName,
         verifiedAt: parsed.verifiedAt,
         feedbacks: Array.isArray(parsed.feedbacks) ? parsed.feedbacks : [],
+        reactions: parsed.reactions && typeof parsed.reactions === 'object' ? parsed.reactions : {},
       };
     }
   } catch {
@@ -43,11 +50,61 @@ export function parseLogNotes(notesRaw: string | null | undefined): TaskLogMetad
     note: notesRaw,
     status: 'completed',
     feedbacks: [],
+    reactions: {},
   };
 }
 
 export function encodeLogNotes(meta: TaskLogMetadata): string {
   return JSON.stringify(meta);
+}
+
+/**
+ * Toggle an emoji reaction for a user on a task log.
+ */
+export async function toggleTaskLogReaction(
+  logId: string,
+  emoji: string,
+  userId: string
+): Promise<{ success: boolean; reactions?: Record<string, string[]>; error?: string }> {
+  try {
+    const { data: log, error: logErr } = await supabase
+      .from('task_logs')
+      .select('notes')
+      .eq('id', logId)
+      .single();
+
+    if (logErr || !log) {
+      return { success: false, error: 'Task log not found.' };
+    }
+
+    const currentMeta = parseLogNotes(log.notes);
+    const reactions: Record<string, string[]> = { ...(currentMeta.reactions || {}) };
+    const currentUsers = reactions[emoji] || [];
+
+    if (currentUsers.includes(userId)) {
+      reactions[emoji] = currentUsers.filter((id) => id !== userId);
+    } else {
+      reactions[emoji] = [...currentUsers, userId];
+    }
+
+    const updatedMeta: TaskLogMetadata = {
+      ...currentMeta,
+      reactions,
+    };
+
+    const { error: updateErr } = await supabase
+      .from('task_logs')
+      .update({ notes: encodeLogNotes(updatedMeta) })
+      .eq('id', logId);
+
+    if (updateErr) {
+      return { success: false, error: updateErr.message };
+    }
+
+    return { success: true, reactions };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to toggle reaction.' };
+  }
 }
 
 /**
