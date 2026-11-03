@@ -1,4 +1,4 @@
-import { supabase } from './supabase';
+import { supabase, supabaseAdmin } from './supabase';
 
 export interface TaskLogMetadata {
   note: string;
@@ -67,7 +67,7 @@ export async function toggleTaskLogReaction(
   userId: string
 ): Promise<{ success: boolean; reactions?: Record<string, string[]>; error?: string }> {
   try {
-    const { data: log, error: logErr } = await supabase
+    const { data: log, error: logErr } = await supabaseAdmin
       .from('task_logs')
       .select('notes')
       .eq('id', logId)
@@ -92,7 +92,7 @@ export async function toggleTaskLogReaction(
       reactions,
     };
 
-    const { error: updateErr } = await supabase
+    const { error: updateErr } = await supabaseAdmin
       .from('task_logs')
       .update({ notes: encodeLogNotes(updatedMeta) })
       .eq('id', logId);
@@ -118,7 +118,7 @@ export async function verifyTaskLog(
 ): Promise<{ success: boolean; error?: string }> {
   try {
     // 1. Fetch current log
-    const { data: log, error: logErr } = await supabase
+    const { data: log, error: logErr } = await supabaseAdmin
       .from('task_logs')
       .select('*, profiles(id, xp, total_credits, streak_days)')
       .eq('id', logId)
@@ -146,7 +146,7 @@ export async function verifyTaskLog(
       verifiedAt: new Date().toISOString(),
     };
 
-    const { error: updateErr } = await supabase
+    const { error: updateErr } = await supabaseAdmin
       .from('task_logs')
       .update({ notes: encodeLogNotes(updatedMeta) })
       .eq('id', logId);
@@ -159,7 +159,7 @@ export async function verifyTaskLog(
     const creator = log.profiles;
     if (creator) {
       const award = log.credits_awarded || 20;
-      await supabase
+      await supabaseAdmin
         .from('profiles')
         .update({
           xp: (creator.xp || 0) + award,
@@ -183,7 +183,7 @@ export async function addAnonymousFeedback(
   feedbackText: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const { data: log, error: logErr } = await supabase
+    const { data: log, error: logErr } = await supabaseAdmin
       .from('task_logs')
       .select('notes')
       .eq('id', logId)
@@ -207,7 +207,7 @@ export async function addAnonymousFeedback(
       feedbacks: updatedFeedbacks,
     };
 
-    const { error: updateErr } = await supabase
+    const { error: updateErr } = await supabaseAdmin
       .from('task_logs')
       .update({ notes: encodeLogNotes(updatedMeta) })
       .eq('id', logId);
@@ -305,7 +305,7 @@ export async function createMarketplaceTask(params: {
       status: 'open',
     };
 
-    const { error } = await supabase.from('task_templates').insert({
+    const { error } = await supabaseAdmin.from('task_templates').insert({
       house_id: params.houseId,
       name: params.title,
       category: 'Marketplace',
@@ -331,7 +331,7 @@ export async function claimMarketplaceTask(
   username: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const { data: task, error: fetchErr } = await supabase
+    const { data: task, error: fetchErr } = await supabaseAdmin
       .from('task_templates')
       .select('*')
       .eq('id', taskId)
@@ -360,7 +360,7 @@ export async function claimMarketplaceTask(
     meta.claimedBy = userId;
     meta.claimedByName = username;
 
-    const { error } = await supabase
+    const { error } = await supabaseAdmin
       .from('task_templates')
       .update({ icon: JSON.stringify(meta) })
       .eq('id', taskId);
@@ -382,7 +382,7 @@ export async function completeMarketplaceTask(
   photoUrl?: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const { data: task, error: fetchErr } = await supabase
+    const { data: task, error: fetchErr } = await supabaseAdmin
       .from('task_templates')
       .select('*')
       .eq('id', taskId)
@@ -405,7 +405,7 @@ export async function completeMarketplaceTask(
 
     // Set template status to completed
     meta.status = 'completed';
-    await supabase
+    await supabaseAdmin
       .from('task_templates')
       .update({ icon: JSON.stringify(meta), is_active: false })
       .eq('id', taskId);
@@ -417,7 +417,7 @@ export async function completeMarketplaceTask(
       feedbacks: [],
     };
 
-    const { error: logErr } = await supabase.from('task_logs').insert({
+    const { error: logErr } = await supabaseAdmin.from('task_logs').insert({
       user_id: userId,
       task_id: taskId,
       credits_awarded: task.base_credits,

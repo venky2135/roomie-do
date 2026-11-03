@@ -50,3 +50,15 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   },
 });
 
+// Admin client using service role key to bypass RLS for chore verifications, feedbacks & reactions
+const serviceRoleKey =
+  process.env.EXPO_PUBLIC_SUPABASE_SERVICE_ROLE_KEY ||
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inh4amViZXZ3cXl6cHZqcndyaXFnIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc5MzUyOTQzOSwiZXhwIjoyMTA5MTA1NDM5fQ.Y_8akbycsKHAjXHEDxuEEmHkBRNA989VEPAnnl22kFY';
+
+export const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey, {
+  auth: {
+    persistSession: false,
+    autoRefreshToken: false,
+  },
+});
+

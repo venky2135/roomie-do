@@ -12,7 +12,7 @@ import {
   Alert,
 } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { supabase } from '../../lib/supabase';
+import { supabase, supabaseAdmin } from '../../lib/supabase';
 import { useAuthStore } from '../../store/useAuthStore';
 import { COLORS, FONTS, SPACING, RADIUS } from '../../constants/theme';
 import AppIcon from '../../components/AppIcon';
@@ -50,20 +50,27 @@ export default function FeedScreen() {
 
   const loadFeed = useCallback(async () => {
     if (!profile?.house_id) return;
-    const memberIds = (await supabase
-      .from('profiles')
-      .select('id')
-      .eq('house_id', profile.house_id)
-    ).data?.map((m) => m.id) ?? [];
+    try {
+      const { data: memberProfiles } = await supabaseAdmin
+        .from('profiles')
+        .select('id')
+        .eq('house_id', profile.house_id);
 
-    const { data } = await supabase
-      .from('task_logs')
-      .select('*, profiles(username, avatar_url), task_templates(name, icon, category)')
-      .in('user_id', memberIds)
-      .order('completed_at', { ascending: false })
-      .limit(50);
+      const memberIds = memberProfiles?.map((m) => m.id) ?? [];
+      if (memberIds.length === 0) {
+        setFeed([]);
+        return;
+      }
 
-    setFeed((data as FeedItem[]) ?? []);
+      const { data } = await supabaseAdmin
+        .from('task_logs')
+        .select('*, profiles(username, avatar_url), task_templates(name, icon, category)')
+        .in('user_id', memberIds)
+        .order('completed_at', { ascending: false })
+        .limit(50);
+
+      setFeed((data as FeedItem[]) ?? []);
+    } catch (_) {}
   }, [profile?.house_id]);
 
   useEffect(() => {
