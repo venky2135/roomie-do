@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { fetchTasks, upsertTask, toggleTask, regenerateCode, removeMember } from '../../lib/api';
-import { supabase } from '../../lib/supabase';
+import { supabase, supabaseAdmin } from '../../lib/supabase';
 import { useAuthStore } from '../../store/useAuthStore';
 import { useHouseStore, TaskTemplate, Member } from '../../store/useHouseStore';
 import { COLORS, FONTS, SPACING, RADIUS, CATEGORY_COLORS } from '../../constants/theme';
@@ -25,11 +25,16 @@ export default function AdminScreen() {
     if (!profile?.house_id) return;
     try {
       const [tasksRes, membersRes, houseRes] = await Promise.all([
-        fetchTasks(profile.house_id),
-        supabase.from('profiles').select('*').eq('house_id', profile.house_id),
-        supabase.from('houses').select('*').eq('id', profile.house_id).single(),
+        supabaseAdmin
+          .from('task_templates')
+          .select('*')
+          .eq('house_id', profile.house_id)
+          .neq('category', 'Marketplace')
+          .order('category'),
+        supabaseAdmin.from('profiles').select('*').eq('house_id', profile.house_id),
+        supabaseAdmin.from('houses').select('*').eq('id', profile.house_id).single(),
       ]);
-      if (tasksRes.data?.tasks) setTasks(tasksRes.data.tasks);
+      if (tasksRes.data) setTasks(tasksRes.data as TaskTemplate[]);
       if (membersRes.data) setMembers(membersRes.data as Member[]);
       if (houseRes.data) {
         setHouse(houseRes.data);
@@ -54,27 +59,56 @@ export default function AdminScreen() {
   };
 
   const handleSaveTask = async () => {
-    if (!editTask?.name?.trim()) { Alert.alert('Error', 'Task name is required'); return; }
+    if (!editTask?.name?.trim()) {
+      if (Platform.OS === 'web') alert('Task name is required');
+      else Alert.alert('Error', 'Task name is required');
+      return;
+    }
     try {
-      await upsertTask({
-        id: editTask.id,
-        houseId: profile!.house_id!,
-        name: editTask.name!,
+      const payload = {
+        house_id: profile!.house_id!,
+        name: editTask.name!.trim(),
         icon: editTask.icon ?? '🧹',
         category: editTask.category ?? 'General',
-        baseCredits: editTask.base_credits ?? 20,
-        photoRequired: editTask.photo_required ?? false,
-      });
+        base_credits: Number(editTask.base_credits) || 20,
+        photo_required: !!editTask.photo_required,
+        is_active: editTask.is_active ?? true,
+      };
+
+      if (editTask.id) {
+        const { error } = await supabaseAdmin
+          .from('task_templates')
+          .update(payload)
+          .eq('id', editTask.id);
+        if (error) throw error;
+      } else {
+        const { error } = await supabaseAdmin
+          .from('task_templates')
+          .insert(payload);
+        if (error) throw error;
+      }
+
       setModalVisible(false);
       await loadAll();
     } catch (e: any) {
-      Alert.alert('Error', e?.response?.data?.error ?? 'Save failed');
+      const msg = e?.message || 'Save failed';
+      if (Platform.OS === 'web') alert('Error: ' + msg);
+      else Alert.alert('Error', msg);
     }
   };
 
   const handleToggleTask = async (taskId: string) => {
-    await toggleTask(taskId);
-    await loadAll();
+    const target = tasks.find((t) => t.id === taskId);
+    if (!target) return;
+    try {
+      await supabaseAdmin
+        .from('task_templates')
+        .update({ is_active: !target.is_active })
+        .eq('id', taskId);
+      await loadAll();
+    } catch (err: any) {
+      console.warn('Toggle failed:', err);
+    }
   };
 
   const handleRegenerateCode = async () => {

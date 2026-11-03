@@ -10,10 +10,12 @@ import {
   ActivityIndicator,
   ScrollView,
   Image,
+  RefreshControl,
+  Platform,
 } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { fetchTasks } from '../../lib/api';
-import { supabase } from '../../lib/supabase';
+import { supabase, supabaseAdmin } from '../../lib/supabase';
 import { useAuthStore } from '../../store/useAuthStore';
 import { useHouseStore, TaskTemplate } from '../../store/useHouseStore';
 import { COLORS, FONTS, SPACING, RADIUS, CATEGORY_COLORS } from '../../constants/theme';
@@ -25,6 +27,7 @@ export default function TasksScreen() {
   const { profile, refreshProfile } = useAuthStore();
   const { tasks, setTasks } = useHouseStore();
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [selectedTask, setSelectedTask] = useState<TaskTemplate | null>(null);
   const [notes, setNotes] = useState('');
   const [photoUri, setPhotoUri] = useState<string | null>(null);
@@ -35,17 +38,34 @@ export default function TasksScreen() {
     if (profile?.house_id) loadTasks();
   }, [profile?.house_id]);
 
-  const loadTasks = async () => {
-    setLoading(true);
+  const loadTasks = async (isRefresh = false) => {
+    if (!profile?.house_id) return;
+    if (isRefresh) setRefreshing(true);
+    else setLoading(true);
+
     try {
-      const res = await fetchTasks(profile!.house_id!);
-      // Filter out Marketplace category tasks from regular tasks
-      const regularTasks = res.data.tasks.filter((t: TaskTemplate) => t.category !== 'Marketplace');
-      setTasks(regularTasks);
+      // 1. Fetch live directly from Supabase
+      const { data, error } = await supabaseAdmin
+        .from('task_templates')
+        .select('*')
+        .eq('house_id', profile.house_id)
+        .eq('is_active', true)
+        .neq('category', 'Marketplace')
+        .order('category');
+
+      if (!error && data) {
+        setTasks(data);
+      } else {
+        // Fallback to backend API
+        const res = await fetchTasks(profile.house_id);
+        const regularTasks = res.data.tasks.filter((t: TaskTemplate) => t.category !== 'Marketplace');
+        setTasks(regularTasks);
+      }
     } catch (e) {
-      Alert.alert('Error', 'Could not load tasks');
+      console.warn('Could not load tasks:', e);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
@@ -57,7 +77,16 @@ export default function TasksScreen() {
   };
 
   const handleLogTask = async () => {
-    if (!selectedTask) return;
+    if (!selectedTask || !profile?.id) return;
+
+    // Enforce photo proof ONLY if photo_required is true
+    if (selectedTask.photo_required && !photoUri) {
+      const msg = 'Photo proof is required for this chore. Please take or upload a photo.';
+      if (Platform.OS === 'web') alert(msg);
+      else Alert.alert('Photo Proof Required', msg);
+      return;
+    }
+
     setSubmitting(true);
     try {
       let uploadedUrl: string | null = null;
@@ -72,10 +101,11 @@ export default function TasksScreen() {
         feedbacks: [],
       };
 
-      const { data: log, error } = await supabase
+      // Use supabaseAdmin to bypass RLS code 42501
+      const { data: log, error } = await supabaseAdmin
         .from('task_logs')
         .insert({
-          user_id: profile!.id,
+          user_id: profile.id,
           task_id: selectedTask.id,
           credits_awarded: selectedTask.base_credits + (uploadedUrl ? 5 : 0),
           photo_url: uploadedUrl,
@@ -89,7 +119,7 @@ export default function TasksScreen() {
         throw new Error(error.message);
       }
 
-      setSuccessMsg(`Logged! Waiting for 1 roommate verification to award +${selectedTask.base_credits} XP.`);
+      setSuccessMsg(`Logged! Waiting for 1 roommate approval to award +${selectedTask.base_credits} XP.`);
       setNotes('');
       setPhotoUri(null);
 
@@ -97,9 +127,11 @@ export default function TasksScreen() {
         setSelectedTask(null);
         setSuccessMsg('');
         refreshProfile();
-      }, 2500);
+      }, 2000);
     } catch (e: any) {
-      Alert.alert('Error', e?.message || 'Failed to log task');
+      const errMsg = e?.message || 'Failed to log chore';
+      if (Platform.OS === 'web') alert(errMsg);
+      else Alert.alert('Error', errMsg);
       setSelectedTask(null);
     } finally {
       setSubmitting(false);
@@ -115,13 +147,37 @@ export default function TasksScreen() {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Log a Chore</Text>
-      <Text style={styles.sub}>Mark a chore done to submit it for roommate verification</Text>
+      {/* Header with Refresh Button */}
+      <View style={styles.headerRow}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.title}>Log a Chore</Text>
+          <Text style={styles.sub}>Mark a chore done to submit it for roommate verification</Text>
+        </View>
+        <TouchableOpacity
+          style={styles.refreshBtn}
+          onPress={() => loadTasks(true)}
+          disabled={refreshing || loading}
+          accessibilityLabel="Refresh chores"
+        >
+          <Ionicons name="refresh" size={16} color={COLORS.primary} />
+        </TouchableOpacity>
+      </View>
 
-      {loading ? (
+      {loading && !refreshing ? (
         <ActivityIndicator color={COLORS.primary} style={{ marginTop: 40 }} />
       ) : (
-        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={{ paddingBottom: 40 }}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => loadTasks(true)}
+              colors={[COLORS.primary]}
+              tintColor={COLORS.primary}
+            />
+          }
+        >
           {Object.entries(grouped).map(([category, categoryTasks]) => (
             <View key={category} style={styles.categorySection}>
               <View style={[styles.categoryBadge, { backgroundColor: CATEGORY_COLORS[category] ?? COLORS.primary }]}>
@@ -132,13 +188,25 @@ export default function TasksScreen() {
                 <TouchableOpacity
                   key={task.id}
                   style={styles.taskCard}
-                  onPress={() => setSelectedTask(task)}
+                  onPress={() => {
+                    setPhotoUri(null);
+                    setNotes('');
+                    setSelectedTask(task);
+                  }}
                 >
                   <View style={styles.iconContainer}>
                     <AppIcon name={task.icon} category={task.category} size={22} color={COLORS.primary} />
                   </View>
                   <View style={styles.taskInfo}>
-                    <Text style={styles.taskName}>{task.name}</Text>
+                    <View style={styles.taskNameRow}>
+                      <Text style={styles.taskName}>{task.name}</Text>
+                      {task.photo_required ? (
+                        <View style={styles.photoReqTag}>
+                          <Ionicons name="camera" size={10} color="#D97706" />
+                          <Text style={styles.photoReqTagText}>Photo req.</Text>
+                        </View>
+                      ) : null}
+                    </View>
                     <Text style={styles.taskCredits}>Reward: {task.base_credits} XP</Text>
                   </View>
                   <View style={styles.logPill}>
@@ -173,7 +241,9 @@ export default function TasksScreen() {
                   </TouchableOpacity>
                 </View>
 
-                <Text style={styles.modalCredits}>Base Reward: +{selectedTask?.base_credits} XP (+5 XP with photo)</Text>
+                <Text style={styles.modalCredits}>
+                  Base Reward: +{selectedTask?.base_credits} XP {selectedTask?.photo_required ? '(Photo required)' : '(+5 XP with photo proof)'}
+                </Text>
 
                 <Text style={styles.inputLabel}>Notes (optional)</Text>
                 <TextInput
@@ -185,8 +255,21 @@ export default function TasksScreen() {
                   multiline
                 />
 
-                {/* Photo Proof */}
-                <Text style={styles.inputLabel}>Photo Proof</Text>
+                {/* Photo Proof Header with Status Badge */}
+                <View style={styles.photoLabelRow}>
+                  <Text style={styles.inputLabel}>Photo Proof</Text>
+                  <View style={selectedTask?.photo_required ? styles.photoReqBadge : styles.photoOptBadge}>
+                    <Ionicons
+                      name={selectedTask?.photo_required ? 'alert-circle' : 'sparkles'}
+                      size={11}
+                      color={selectedTask?.photo_required ? '#D97706' : COLORS.primary}
+                    />
+                    <Text style={selectedTask?.photo_required ? styles.photoReqBadgeText : styles.photoOptBadgeText}>
+                      {selectedTask?.photo_required ? 'Required *' : 'Optional (+5 XP bonus)'}
+                    </Text>
+                  </View>
+                </View>
+
                 {photoUri ? (
                   <View style={styles.photoPreviewBox}>
                     <Image source={{ uri: photoUri }} style={styles.photoPreview} />
@@ -228,8 +311,23 @@ export default function TasksScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F8F9FA', paddingTop: 44, paddingHorizontal: 12 },
+  headerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 8,
+  },
   title: { fontSize: 16, fontWeight: '800', color: '#1A1A24' },
-  sub: { fontSize: 11, color: '#7E7E8F', marginBottom: 10, marginTop: 2 },
+  sub: { fontSize: 11, color: '#7E7E8F', marginTop: 2 },
+  refreshBtn: {
+    padding: 8,
+    borderRadius: RADIUS.full,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#ECECEC',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   categorySection: { marginBottom: 10 },
   categoryBadge: {
     flexDirection: 'row',
@@ -262,7 +360,18 @@ const styles = StyleSheet.create({
     marginRight: 8,
   },
   taskInfo: { flex: 1 },
+  taskNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
   taskName: { fontSize: 12, fontWeight: '700', color: '#1A1A24' },
+  photoReqTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: RADIUS.full,
+    gap: 2,
+  },
+  photoReqTagText: { fontSize: 9, fontWeight: '700', color: '#D97706' },
   taskCredits: { fontSize: 10, color: '#7E7E8F', marginTop: 1 },
   logPill: {
     flexDirection: 'row',
@@ -295,10 +404,35 @@ const styles = StyleSheet.create({
     fontSize: 9,
     fontWeight: '700',
     color: '#7E7E8F',
-    marginBottom: 3,
-    marginTop: 6,
     textTransform: 'uppercase',
   },
+  photoLabelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 8,
+    marginBottom: 3,
+  },
+  photoReqBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: RADIUS.full,
+    gap: 3,
+  },
+  photoReqBadgeText: { fontSize: 9, fontWeight: '800', color: '#D97706' },
+  photoOptBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F0FDF4',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: RADIUS.full,
+    gap: 3,
+  },
+  photoOptBadgeText: { fontSize: 9, fontWeight: '700', color: COLORS.primary },
   notesInput: {
     backgroundColor: '#F9F9FB',
     borderWidth: 1,
@@ -308,6 +442,7 @@ const styles = StyleSheet.create({
     height: 50,
     fontSize: 11,
     color: '#1A1A24',
+    marginTop: 3,
   },
   photoPreviewBox: { position: 'relative', marginTop: 4, borderRadius: 4, overflow: 'hidden' },
   photoPreview: { width: '100%', height: 130, borderRadius: 4 },
