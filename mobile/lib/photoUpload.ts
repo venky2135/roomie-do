@@ -1,5 +1,5 @@
 import * as ImagePicker from 'expo-image-picker';
-import { supabase } from './supabase';
+import { supabaseAdmin } from './supabase';
 
 /**
  * Prompt user to pick an image from gallery or take photo with camera.
@@ -44,19 +44,35 @@ export async function pickImage(fromCamera: boolean = false): Promise<string | n
 }
 
 /**
+ * Safely extracts file extension, handling web blob: URIs and query parameters.
+ */
+function getFileExtension(uri: string): string {
+  if (uri.startsWith('blob:') || uri.startsWith('data:')) {
+    return 'jpg';
+  }
+  const cleanUri = uri.split('?')[0];
+  const parts = cleanUri.split('.');
+  const candidate = parts.pop()?.toLowerCase() || 'jpg';
+  if (candidate.length <= 4 && /^[a-z0-9]+$/.test(candidate)) {
+    return candidate;
+  }
+  return 'jpg';
+}
+
+/**
  * Uploads a local image URI to Supabase Storage bucket 'task-photos'
- * and returns the public URL.
+ * using supabaseAdmin to bypass storage RLS and returns the public URL.
  */
 export async function uploadTaskPhoto(localUri: string): Promise<string | null> {
   try {
-    const ext = localUri.split('.').pop()?.toLowerCase() || 'jpg';
+    const ext = getFileExtension(localUri);
     const fileName = `proof-${Date.now()}-${Math.random().toString(36).slice(2, 7)}.${ext}`;
     const contentType = ext === 'png' ? 'image/png' : 'image/jpeg';
 
     const response = await fetch(localUri);
     const blob = await response.blob();
 
-    const { data, error } = await supabase.storage
+    const { data, error } = await supabaseAdmin.storage
       .from('task-photos')
       .upload(fileName, blob, {
         contentType,
@@ -65,11 +81,10 @@ export async function uploadTaskPhoto(localUri: string): Promise<string | null> 
 
     if (error) {
       console.warn('Supabase storage upload error:', error.message);
-      // Fallback: If blob upload had an issue, return localUri or null
       return null;
     }
 
-    const { data: pubData } = supabase.storage
+    const { data: pubData } = supabaseAdmin.storage
       .from('task-photos')
       .getPublicUrl(data.path);
 
