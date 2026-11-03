@@ -1,11 +1,20 @@
 import React from 'react';
-import { View, ActivityIndicator, Text } from 'react-native';
+import { View, ActivityIndicator } from 'react-native';
 import { Tabs, Redirect } from 'expo-router';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { useAuthStore } from '../../store/useAuthStore';
 import { COLORS } from '../../constants/theme';
 
-function TabIcon({ emoji, focused }: { emoji: string; focused: boolean }) {
-  return <Text style={{ fontSize: focused ? 26 : 22, opacity: focused ? 1 : 0.6 }}>{emoji}</Text>;
+function TabBarIcon({
+  name,
+  focused,
+  color,
+}: {
+  name: keyof typeof Ionicons.glyphMap;
+  focused: boolean;
+  color?: any;
+}) {
+  return <Ionicons name={name} size={focused ? 24 : 22} color={color} />;
 }
 
 export default function TabLayout() {
@@ -34,6 +43,7 @@ export default function TabLayout() {
           borderTopColor: COLORS.border,
           height: 64,
           paddingBottom: 8,
+          paddingTop: 6,
         },
         tabBarLabelStyle: { fontSize: 11, fontWeight: '600' },
       }}
@@ -42,38 +52,54 @@ export default function TabLayout() {
         name="index"
         options={{
           title: 'Home',
-          tabBarIcon: ({ focused }: { focused: boolean }) => <TabIcon emoji="🏠" focused={focused} />,
+          tabBarIcon: ({ focused, color }) => (
+            <TabBarIcon name={focused ? 'home' : 'home-outline'} focused={focused} color={color} />
+          ),
         }}
       />
       <Tabs.Screen
         name="tasks"
         options={{
           title: 'Tasks',
-          tabBarIcon: ({ focused }: { focused: boolean }) => <TabIcon emoji="✅" focused={focused} />,
+          tabBarIcon: ({ focused, color }) => (
+            <TabBarIcon name={focused ? 'checkbox' : 'checkbox-outline'} focused={focused} color={color} />
+          ),
         }}
       />
       <Tabs.Screen
-        name="leaderboard"
+        name="marketplace"
         options={{
-          title: 'Ranking',
-          tabBarIcon: ({ focused }: { focused: boolean }) => <TabIcon emoji="🏆" focused={focused} />,
+          title: 'Marketplace',
+          tabBarIcon: ({ focused, color }) => (
+            <TabBarIcon name={focused ? 'storefront' : 'storefront-outline'} focused={focused} color={color} />
+          ),
         }}
       />
       <Tabs.Screen
         name="feed"
         options={{
           title: 'Feed',
-          tabBarIcon: ({ focused }: { focused: boolean }) => <TabIcon emoji="📰" focused={focused} />,
+          tabBarIcon: ({ focused, color }) => (
+            <TabBarIcon name={focused ? 'chatbubbles' : 'chatbubbles-outline'} focused={focused} color={color} />
+          ),
         }}
       />
       <Tabs.Screen
         name="profile"
         options={{
           title: 'Profile',
-          tabBarIcon: ({ focused }: { focused: boolean }) => <TabIcon emoji="👤" focused={focused} />,
+          tabBarIcon: ({ focused, color }) => (
+            <TabBarIcon name={focused ? 'person' : 'person-outline'} focused={focused} color={color} />
+          ),
+        }}
+      />
+      {/* Hide legacy leaderboard route from tab bar */}
+      <Tabs.Screen
+        name="leaderboard"
+        options={{
+          href: null,
         }}
       />
     </Tabs>
   );
 }
-

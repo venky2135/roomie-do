@@ -89,6 +89,28 @@ CREATE TABLE nudges (
   sent_at      TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- ── Marketplace Tasks (Chore Bounties) ────────────────────────
+CREATE TABLE marketplace_tasks (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  house_id     UUID NOT NULL REFERENCES houses(id) ON DELETE CASCADE,
+  created_by   UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  title        TEXT NOT NULL,
+  description  TEXT,
+  bounty_xp    INT DEFAULT 25,
+  claimed_by   UUID REFERENCES profiles(id) ON DELETE SET NULL,
+  claimed_at   TIMESTAMPTZ,
+  status       TEXT DEFAULT 'open', -- 'open' | 'claimed' | 'completed'
+  created_at   TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ── Task Anonymous Feedbacks ──────────────────────────────────
+CREATE TABLE task_feedbacks (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  task_log_id  UUID NOT NULL REFERENCES task_logs(id) ON DELETE CASCADE,
+  feedback     TEXT NOT NULL,
+  created_at   TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- ============================================================
 -- ROW LEVEL SECURITY (RLS)
 -- ============================================================

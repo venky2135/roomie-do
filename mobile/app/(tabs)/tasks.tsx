@@ -1,12 +1,25 @@
 import React, { useEffect, useState } from 'react';
 import {
-  View, Text, StyleSheet, FlatList, TouchableOpacity,
-  Modal, TextInput, Alert, ActivityIndicator, ScrollView,
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  Modal,
+  TextInput,
+  Alert,
+  ActivityIndicator,
+  ScrollView,
+  Image,
 } from 'react-native';
-import { fetchTasks, logTask } from '../../lib/api';
+import Ionicons from '@expo/vector-icons/Ionicons';
+import { fetchTasks } from '../../lib/api';
+import { supabase } from '../../lib/supabase';
 import { useAuthStore } from '../../store/useAuthStore';
 import { useHouseStore, TaskTemplate } from '../../store/useHouseStore';
 import { COLORS, FONTS, SPACING, RADIUS, CATEGORY_COLORS } from '../../constants/theme';
+import AppIcon from '../../components/AppIcon';
+import { pickImage, uploadTaskPhoto } from '../../lib/photoUpload';
+import { encodeLogNotes } from '../../lib/taskWorkflow';
 
 export default function TasksScreen() {
   const { profile, refreshProfile } = useAuthStore();
@@ -14,6 +27,7 @@ export default function TasksScreen() {
   const [loading, setLoading] = useState(false);
   const [selectedTask, setSelectedTask] = useState<TaskTemplate | null>(null);
   const [notes, setNotes] = useState('');
+  const [photoUri, setPhotoUri] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [successMsg, setSuccessMsg] = useState('');
 
@@ -25,7 +39,9 @@ export default function TasksScreen() {
     setLoading(true);
     try {
       const res = await fetchTasks(profile!.house_id!);
-      setTasks(res.data.tasks);
+      // Filter out Marketplace category tasks from regular tasks
+      const regularTasks = res.data.tasks.filter((t: TaskTemplate) => t.category !== 'Marketplace');
+      setTasks(regularTasks);
     } catch (e) {
       Alert.alert('Error', 'Could not load tasks');
     } finally {
@@ -33,21 +49,57 @@ export default function TasksScreen() {
     }
   };
 
+  const handlePickPhoto = async (fromCamera: boolean) => {
+    const uri = await pickImage(fromCamera);
+    if (uri) {
+      setPhotoUri(uri);
+    }
+  };
+
   const handleLogTask = async () => {
     if (!selectedTask) return;
     setSubmitting(true);
     try {
-      const res = await logTask({ taskId: selectedTask.id, notes });
-      const { credits } = res.data;
-      setSuccessMsg(`+${credits.creditsAwarded} credits awarded! ${credits.streakBonus ? '🔥 Streak bonus!' : ''}`);
+      let uploadedUrl: string | null = null;
+      if (photoUri) {
+        uploadedUrl = await uploadTaskPhoto(photoUri);
+      }
+
+      // Encode log notes with pending verification state
+      const logMetadata = {
+        note: notes.trim(),
+        status: 'pending_verification' as const,
+        feedbacks: [],
+      };
+
+      const { data: log, error } = await supabase
+        .from('task_logs')
+        .insert({
+          user_id: profile!.id,
+          task_id: selectedTask.id,
+          credits_awarded: selectedTask.base_credits + (uploadedUrl ? 5 : 0),
+          photo_url: uploadedUrl,
+          notes: encodeLogNotes(logMetadata),
+          completed_at: new Date().toISOString(),
+        })
+        .select()
+        .single();
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      setSuccessMsg(`Logged! Waiting for 1 roommate verification to award +${selectedTask.base_credits} XP.`);
       setNotes('');
+      setPhotoUri(null);
+
       setTimeout(() => {
         setSelectedTask(null);
         setSuccessMsg('');
         refreshProfile();
-      }, 2000);
+      }, 2500);
     } catch (e: any) {
-      Alert.alert('Error', e?.response?.data?.error ?? 'Failed to log task');
+      Alert.alert('Error', e?.message || 'Failed to log task');
       setSelectedTask(null);
     } finally {
       setSubmitting(false);
@@ -64,15 +116,16 @@ export default function TasksScreen() {
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Log a Chore</Text>
-      <Text style={styles.sub}>Tap a task to mark it done and earn credits!</Text>
+      <Text style={styles.sub}>Mark a chore done to submit it for roommate verification</Text>
 
       {loading ? (
         <ActivityIndicator color={COLORS.primary} style={{ marginTop: 40 }} />
       ) : (
-        <ScrollView showsVerticalScrollIndicator={false}>
+        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
           {Object.entries(grouped).map(([category, categoryTasks]) => (
             <View key={category} style={styles.categorySection}>
               <View style={[styles.categoryBadge, { backgroundColor: CATEGORY_COLORS[category] ?? COLORS.primary }]}>
+                <AppIcon category={category} size={14} color="#FFF" />
                 <Text style={styles.categoryText}>{category}</Text>
               </View>
               {categoryTasks.map((task) => (
@@ -81,12 +134,17 @@ export default function TasksScreen() {
                   style={styles.taskCard}
                   onPress={() => setSelectedTask(task)}
                 >
-                  <Text style={styles.taskIcon}>{task.icon}</Text>
+                  <View style={styles.iconContainer}>
+                    <AppIcon name={task.icon} category={task.category} size={22} color={COLORS.primary} />
+                  </View>
                   <View style={styles.taskInfo}>
                     <Text style={styles.taskName}>{task.name}</Text>
-                    <Text style={styles.taskCredits}>Base: {task.base_credits} credits</Text>
+                    <Text style={styles.taskCredits}>Reward: {task.base_credits} XP</Text>
                   </View>
-                  <Text style={styles.logBtn}>Log →</Text>
+                  <View style={styles.logPill}>
+                    <Text style={styles.logBtnText}>Log</Text>
+                    <Ionicons name="arrow-forward" size={14} color={COLORS.primary} />
+                  </View>
                 </TouchableOpacity>
               ))}
             </View>
@@ -100,35 +158,64 @@ export default function TasksScreen() {
           <View style={styles.modalCard}>
             {successMsg ? (
               <View style={styles.successBox}>
-                <Text style={styles.successEmoji}>🎉</Text>
+                <Ionicons name="checkmark-circle" size={48} color={COLORS.success} />
                 <Text style={styles.successText}>{successMsg}</Text>
               </View>
             ) : (
               <>
-                <Text style={styles.modalTitle}>{selectedTask?.icon} {selectedTask?.name}</Text>
-                <Text style={styles.modalCredits}>Base credits: {selectedTask?.base_credits}</Text>
+                <View style={styles.modalHeader}>
+                  <View style={styles.modalTitleRow}>
+                    <AppIcon name={selectedTask?.icon} category={selectedTask?.category} size={24} color={COLORS.primary} />
+                    <Text style={styles.modalTitle}>{selectedTask?.name}</Text>
+                  </View>
+                  <TouchableOpacity onPress={() => setSelectedTask(null)}>
+                    <Ionicons name="close" size={24} color={COLORS.textSecondary} />
+                  </TouchableOpacity>
+                </View>
 
+                <Text style={styles.modalCredits}>Base Reward: +{selectedTask?.base_credits} XP (+5 XP with photo)</Text>
+
+                <Text style={styles.inputLabel}>Notes (optional)</Text>
                 <TextInput
                   style={styles.notesInput}
-                  placeholder="Add a note (optional)"
+                  placeholder="e.g. Cleaned oven and wiped shelves"
                   placeholderTextColor={COLORS.textLight}
                   value={notes}
                   onChangeText={setNotes}
                   multiline
                 />
 
+                {/* Photo Proof */}
+                <Text style={styles.inputLabel}>Photo Proof</Text>
+                {photoUri ? (
+                  <View style={styles.photoPreviewBox}>
+                    <Image source={{ uri: photoUri }} style={styles.photoPreview} />
+                    <TouchableOpacity style={styles.removePhotoBtn} onPress={() => setPhotoUri(null)}>
+                      <Ionicons name="trash" size={16} color="#FFF" />
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  <View style={styles.photoActionsRow}>
+                    <TouchableOpacity style={styles.photoActionBtn} onPress={() => handlePickPhoto(true)}>
+                      <Ionicons name="camera-outline" size={20} color={COLORS.primary} />
+                      <Text style={styles.photoActionText}>Take Photo</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.photoActionBtn} onPress={() => handlePickPhoto(false)}>
+                      <Ionicons name="images-outline" size={20} color={COLORS.primary} />
+                      <Text style={styles.photoActionText}>Choose from Gallery</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
                 <TouchableOpacity
                   style={[styles.confirmBtn, submitting && { opacity: 0.6 }]}
                   onPress={handleLogTask}
                   disabled={submitting}
                 >
+                  <Ionicons name="checkmark-done" size={20} color="#FFF" />
                   <Text style={styles.confirmBtnText}>
-                    {submitting ? 'Logging...' : '✅ Mark as Done'}
+                    {submitting ? 'Submitting...' : 'Mark as Done'}
                   </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity onPress={() => setSelectedTask(null)}>
-                  <Text style={styles.cancelText}>Cancel</Text>
                 </TouchableOpacity>
               </>
             )}
@@ -140,45 +227,130 @@ export default function TasksScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: COLORS.background, paddingTop: SPACING.xl + 16, paddingHorizontal: SPACING.md },
-  title: { fontSize: FONTS.sizes.xxl, fontWeight: '800', color: COLORS.text },
-  sub: { color: COLORS.textSecondary, marginBottom: SPACING.lg, marginTop: 4 },
-  categorySection: { marginBottom: SPACING.md },
+  container: { flex: 1, backgroundColor: '#F8F9FA', paddingTop: 44, paddingHorizontal: 12 },
+  title: { fontSize: 16, fontWeight: '800', color: '#1A1A24' },
+  sub: { fontSize: 11, color: '#7E7E8F', marginBottom: 10, marginTop: 2 },
+  categorySection: { marginBottom: 10 },
   categoryBadge: {
-    paddingHorizontal: SPACING.sm, paddingVertical: 4,
-    borderRadius: RADIUS.full, alignSelf: 'flex-start', marginBottom: SPACING.xs,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: RADIUS.full,
+    alignSelf: 'flex-start',
+    marginBottom: 4,
   },
-  categoryText: { color: '#FFF', fontWeight: '700', fontSize: FONTS.sizes.sm },
+  categoryText: { color: '#FFF', fontSize: 10, fontWeight: '700' },
   taskCard: {
-    flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.card,
-    borderRadius: RADIUS.md, padding: SPACING.md, marginBottom: SPACING.xs,
-    elevation: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: RADIUS.sm,
+    padding: 10,
+    marginBottom: 4,
+    borderWidth: 1,
+    borderColor: '#ECECEC',
   },
-  taskIcon: { fontSize: 28, marginRight: SPACING.sm },
+  iconContainer: {
+    width: 32,
+    height: 32,
+    borderRadius: 6,
+    backgroundColor: '#F3F8F5',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 8,
+  },
   taskInfo: { flex: 1 },
-  taskName: { fontSize: FONTS.sizes.base, fontWeight: '600', color: COLORS.text },
-  taskCredits: { fontSize: FONTS.sizes.xs, color: COLORS.textSecondary, marginTop: 2 },
-  logBtn: { color: COLORS.primary, fontWeight: '700', fontSize: FONTS.sizes.base },
-  // Modal
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  taskName: { fontSize: 12, fontWeight: '700', color: '#1A1A24' },
+  taskCredits: { fontSize: 10, color: '#7E7E8F', marginTop: 1 },
+  logPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#E8F5E9',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: RADIUS.full,
+    gap: 2,
+  },
+  logBtnText: { color: COLORS.primary, fontWeight: '700', fontSize: 10 },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
   modalCard: {
-    backgroundColor: COLORS.card, borderTopLeftRadius: 24, borderTopRightRadius: 24,
-    padding: SPACING.xl,
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: RADIUS.md,
+    borderTopRightRadius: RADIUS.md,
+    padding: 14,
+    maxHeight: '85%',
   },
-  modalTitle: { fontSize: FONTS.sizes.xl, fontWeight: '800', color: COLORS.text, marginBottom: 4 },
-  modalCredits: { color: COLORS.primary, fontWeight: '600', marginBottom: SPACING.md },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  modalTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 },
+  modalTitle: { fontSize: 14, fontWeight: '800', color: '#1A1A24' },
+  modalCredits: { fontSize: 11, color: COLORS.primary, fontWeight: '700', marginBottom: 6 },
+  inputLabel: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#7E7E8F',
+    marginBottom: 3,
+    marginTop: 6,
+    textTransform: 'uppercase',
+  },
   notesInput: {
-    borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.md,
-    padding: SPACING.md, color: COLORS.text, minHeight: 80, marginBottom: SPACING.md,
+    backgroundColor: '#F9F9FB',
+    borderWidth: 1,
+    borderColor: '#ECECEC',
+    borderRadius: 4,
+    padding: 8,
+    height: 50,
+    fontSize: 11,
+    color: '#1A1A24',
   },
+  photoPreviewBox: { position: 'relative', marginTop: 4, borderRadius: 4, overflow: 'hidden' },
+  photoPreview: { width: '100%', height: 130, borderRadius: 4 },
+  removePhotoBtn: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    borderRadius: RADIUS.full,
+    padding: 4,
+  },
+  photoActionsRow: { flexDirection: 'row', gap: 6, marginTop: 4 },
+  photoActionBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: COLORS.primary,
+    borderRadius: 4,
+    paddingVertical: 8,
+    gap: 4,
+  },
+  photoActionText: { fontSize: 10, color: COLORS.primary, fontWeight: '600' },
   confirmBtn: {
-    backgroundColor: COLORS.primary, borderRadius: RADIUS.md,
-    paddingVertical: SPACING.md, alignItems: 'center', marginBottom: SPACING.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.primary,
+    borderRadius: RADIUS.sm,
+    paddingVertical: 10,
+    marginTop: 12,
+    gap: 6,
   },
-  confirmBtnText: { color: '#FFF', fontWeight: '700', fontSize: FONTS.sizes.md },
-  cancelText: { textAlign: 'center', color: COLORS.textSecondary, padding: SPACING.sm },
-  successBox: { alignItems: 'center', paddingVertical: SPACING.xl },
-  successEmoji: { fontSize: 56, marginBottom: SPACING.md },
-  successText: { fontSize: FONTS.sizes.lg, fontWeight: '700', color: COLORS.primary, textAlign: 'center' },
+  confirmBtnText: { color: '#FFF', fontSize: 12, fontWeight: '700' },
+  successBox: { alignItems: 'center', paddingVertical: 20 },
+  successText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#1A1A24',
+    textAlign: 'center',
+    marginTop: 8,
+    lineHeight: 18,
+  },
 });
-

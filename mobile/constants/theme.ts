@@ -64,6 +64,8 @@ export const CATEGORY_COLORS: Record<string, string> = {
   Laundry: '#5C6BC0',
   Shopping: '#FFA726',
   General: '#78909C',
+  Marketplace: '#8E24AA',
+  Bounty: '#E91E63',
 };
 
 export const LEVEL_TITLES: Record<number, string> = {
