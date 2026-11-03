@@ -10,6 +10,7 @@ import {
   Modal,
   TextInput,
   Alert,
+  Platform,
 } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { supabase, supabaseAdmin } from '../../lib/supabase';
@@ -39,7 +40,7 @@ interface FeedItem {
 }
 
 export default function FeedScreen() {
-  const { profile } = useAuthStore();
+  const { profile, refreshProfile } = useAuthStore();
   const [feed, setFeed] = useState<FeedItem[]>([]);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -96,21 +97,60 @@ export default function FeedScreen() {
   };
 
   const handleVerify = async (logId: string) => {
-    Alert.alert('Verify Chore', 'Verify that this chore was properly completed?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Verify & Approve',
-        onPress: async () => {
-          const res = await verifyTaskLog(logId, profile!.id, profile!.username);
-          if (res.success) {
-            Alert.alert('Verified! 👍', 'You approved this chore. XP points have been awarded.');
-            loadFeed();
-          } else {
-            Alert.alert('Notice', res.error || 'Failed to verify chore.');
+    if (!profile?.id) return;
+
+    const executeApprove = async () => {
+      // Optimistically update feed immediately to approved
+      setFeed((prevFeed) =>
+        prevFeed.map((log) => {
+          if (log.id === logId) {
+            const currentMeta = parseLogNotes(log.notes);
+            const updatedMeta: TaskLogMetadata = {
+              ...currentMeta,
+              status: 'completed',
+              verifiedBy: profile.id,
+              verifiedByName: profile.username,
+              verifiedAt: new Date().toISOString(),
+            };
+            return { ...log, notes: encodeLogNotes(updatedMeta) };
           }
-        },
-      },
-    ]);
+          return log;
+        })
+      );
+
+      const res = await verifyTaskLog(logId, profile.id, profile.username);
+      if (res.success) {
+        if (Platform.OS === 'web') {
+          alert('Approved! 👍 XP points have been awarded.');
+        } else {
+          Alert.alert('Approved! 👍', 'You approved this chore. XP points have been awarded.');
+        }
+        await loadFeed();
+        refreshProfile();
+      } else {
+        if (Platform.OS === 'web') {
+          alert(res.error || 'Failed to approve chore.');
+        } else {
+          Alert.alert('Notice', res.error || 'Failed to approve chore.');
+        }
+        await loadFeed();
+      }
+    };
+
+    if (Platform.OS === 'web') {
+      const confirmed =
+        typeof window !== 'undefined'
+          ? window.confirm('Approve this chore and award XP points?')
+          : true;
+      if (confirmed) {
+        await executeApprove();
+      }
+    } else {
+      Alert.alert('Approve Chore', 'Approve this chore and award XP to your roommate?', [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Approve', onPress: executeApprove },
+      ]);
+    }
   };
 
   const handleSendFeedback = async () => {
@@ -273,23 +313,21 @@ export default function FeedScreen() {
                 {isPending ? (
                   <View style={styles.pendingVerifyRow}>
                     <View style={styles.pendingBadge}>
-                      <Ionicons name="time" size={14} color={COLORS.accent} />
+                      <Ionicons name="time" size={12} color={COLORS.accent} />
                       <Text style={styles.pendingText}>
-                        {isMine ? 'Waiting for roommate vote' : 'Needs verification'}
+                        {isMine ? 'Pending roommate approval' : 'Needs approval'}
                       </Text>
                     </View>
-                    {!isMine && (
-                      <TouchableOpacity style={styles.verifyBtn} onPress={() => handleVerify(item.id)}>
-                        <Ionicons name="checkmark-circle" size={16} color="#FFF" />
-                        <Text style={styles.verifyBtnText}>Verify Chore</Text>
-                      </TouchableOpacity>
-                    )}
+                    <TouchableOpacity style={styles.verifyBtn} onPress={() => handleVerify(item.id)}>
+                      <Ionicons name="checkmark-circle" size={14} color="#FFF" />
+                      <Text style={styles.verifyBtnText}>Approve</Text>
+                    </TouchableOpacity>
                   </View>
                 ) : (
                   <View style={styles.verifiedRow}>
                     <Ionicons name="checkmark-circle" size={14} color={COLORS.success} />
                     <Text style={styles.verifiedText}>
-                      Verified {meta.verifiedByName ? `by ${meta.verifiedByName}` : 'and approved'}
+                      Approved {meta.verifiedByName ? `by ${meta.verifiedByName}` : ''}
                     </Text>
                   </View>
                 )}

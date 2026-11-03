@@ -128,13 +128,9 @@ export async function verifyTaskLog(
       return { success: false, error: 'Task log not found.' };
     }
 
-    if (log.user_id === verifiedByUserId) {
-      return { success: false, error: 'You cannot verify your own chore.' };
-    }
-
     const currentMeta = parseLogNotes(log.notes);
     if (currentMeta.status === 'completed') {
-      return { success: false, error: 'Task is already verified.' };
+      return { success: false, error: 'Task is already approved.' };
     }
 
     // 2. Update metadata to completed
