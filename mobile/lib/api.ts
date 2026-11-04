@@ -87,5 +87,44 @@ export const unregisterDeviceToken = (token: string) =>
 export const sendTestNotification = (title?: string, body?: string) =>
   api.post('/api/notifications/test', { title, body });
 
+export const notifyChoreLogged = (payload: { taskId: string; logId: string; taskName: string }) =>
+  api.post('/api/notifications/notify-chore-logged', payload);
+
+export const notifyChoreApproved = (payload: {
+  logId: string;
+  workerUserId: string;
+  taskName: string;
+  award?: number;
+}) => api.post('/api/notifications/notify-chore-approved', payload);
+
+export const notifyLeaveRequested = (payload: {
+  logId: string;
+  duration?: string;
+  reason?: string;
+}) => api.post('/api/notifications/notify-leave-requested', payload);
+
+export const notifyLeaveApproved = (payload: {
+  logId: string;
+  workerUserId: string;
+  isFullyApproved?: boolean;
+  duration?: string;
+}) => api.post('/api/notifications/notify-leave-approved', payload);
+
+export const notifyMarketplaceCreated = (payload: {
+  taskId: string;
+  title: string;
+  bountyXp?: number;
+}) => api.post('/api/notifications/notify-marketplace-created', payload);
+
+export const notifyMarketplaceClaimed = (payload: {
+  taskId: string;
+  title: string;
+  creatorId?: string;
+  bountyXp?: number;
+}) => api.post('/api/notifications/notify-marketplace-claimed', payload);
+
+export const triggerZomatoNudge = (houseOnly = true) =>
+  api.post('/api/notifications/zomato-nudge', { houseOnly });
+
 export default api;
 

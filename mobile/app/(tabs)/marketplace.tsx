@@ -19,7 +19,7 @@ import { useAuthStore } from '../../store/useAuthStore';
 import { COLORS, RADIUS } from '../../constants/theme';
 import AppIcon from '../../components/AppIcon';
 import { supabase } from '../../lib/supabase';
-import { fetchTasks } from '../../lib/api';
+import { fetchTasks, notifyMarketplaceCreated, notifyMarketplaceClaimed } from '../../lib/api';
 import { TaskTemplate } from '../../store/useHouseStore';
 import {
   fetchMarketplaceTasks,
@@ -121,6 +121,12 @@ export default function MarketplaceScreen() {
     setAddingTask(false);
 
     if (res.success) {
+      notifyMarketplaceCreated({
+        taskId: selectedTemplate.id,
+        title: selectedTemplate.name,
+        bountyXp: bounty,
+      }).catch((e) => console.warn('[Push] Failed to broadcast marketplace task:', e));
+
       setShowAddModal(false);
       setSelectedTemplate(null);
       setTaskNote('');
@@ -150,6 +156,13 @@ export default function MarketplaceScreen() {
 
       const res = await claimMarketplaceTask(task.id, profile.id, profile.username);
       if (res.success) {
+        notifyMarketplaceClaimed({
+          taskId: task.id,
+          title: task.title,
+          creatorId: task.createdBy,
+          bountyXp: task.bountyXp,
+        }).catch((e) => console.warn('[Push] Failed to dispatch claim notification:', e));
+
         if (Platform.OS === 'web') {
           // Native browser alert
           alert(`Claimed "${task.title}"! Tap 'Submit Proof' when you finish.`);

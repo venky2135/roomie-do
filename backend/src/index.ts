@@ -9,6 +9,7 @@ import analyticsRoutes from './routes/analytics';
 import nudgeRoutes from './routes/nudge';
 import notificationRoutes from './routes/notifications';
 import { startWeeklyCron } from './cron/weeklyReset';
+import { startZomatoCron } from './cron/zomatoCron';
 
 dotenv.config();
 
@@ -32,8 +33,9 @@ app.use('/api/analytics', analyticsRoutes);
 app.use('/api/nudge', nudgeRoutes);
 app.use('/api/notifications', notificationRoutes);
 
-// Start cron jobs
+// Start scheduled background jobs
 startWeeklyCron();
+startZomatoCron();
 
 app.listen(PORT, () => {
   console.log(`🚀 RoomieDo backend running on port ${PORT}`);

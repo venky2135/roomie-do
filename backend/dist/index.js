@@ -14,6 +14,7 @@ const analytics_1 = __importDefault(require("./routes/analytics"));
 const nudge_1 = __importDefault(require("./routes/nudge"));
 const notifications_1 = __importDefault(require("./routes/notifications"));
 const weeklyReset_1 = require("./cron/weeklyReset");
+const zomatoCron_1 = require("./cron/zomatoCron");
 dotenv_1.default.config();
 const app = (0, express_1.default)();
 const PORT = process.env.PORT || 3000;
@@ -31,8 +32,9 @@ app.use('/api/leaderboard', leaderboard_1.default);
 app.use('/api/analytics', analytics_1.default);
 app.use('/api/nudge', nudge_1.default);
 app.use('/api/notifications', notifications_1.default);
-// Start cron jobs
+// Start scheduled background jobs
 (0, weeklyReset_1.startWeeklyCron)();
+(0, zomatoCron_1.startZomatoCron)();
 app.listen(PORT, () => {
     console.log(`🚀 RoomieDo backend running on port ${PORT}`);
 });

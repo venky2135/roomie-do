@@ -12,6 +12,7 @@ import {
   Platform,
   RefreshControl,
   Keyboard,
+  KeyboardAvoidingView,
 } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { supabase, supabaseAdmin } from '../lib/supabase';
@@ -230,6 +231,12 @@ export default function GroceryListModal({ visible, onClose }: Props) {
     }
   };
 
+  const handleClose = () => {
+    Keyboard.dismiss();
+    setShowEmojiPicker(false);
+    onClose();
+  };
+
   // ─── Derived lists ────────────────────────────────────────────
   const uncheckedItems = items.filter((i) => !i.is_checked);
   const checkedItems = items.filter((i) => i.is_checked);
@@ -271,9 +278,26 @@ export default function GroceryListModal({ visible, onClose }: Props) {
   );
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={styles.overlay}>
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      onRequestClose={handleClose}
+      statusBarTranslucent
+    >
+      <KeyboardAvoidingView
+        style={styles.overlay}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
+        <TouchableOpacity
+          style={styles.backdrop}
+          activeOpacity={1}
+          onPress={handleClose}
+        />
         <View style={styles.sheet}>
+          {/* ── Drag Handle ── */}
+          <View style={styles.dragHandle} />
+
           {/* ── Header ── */}
           <View style={styles.header}>
             <View style={styles.headerLeft}>
@@ -287,7 +311,7 @@ export default function GroceryListModal({ visible, onClose }: Props) {
                 </Text>
               </View>
             </View>
-            <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+            <TouchableOpacity onPress={handleClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
               <Ionicons name="close" size={22} color={COLORS.textSecondary} />
             </TouchableOpacity>
           </View>
@@ -359,8 +383,10 @@ export default function GroceryListModal({ visible, onClose }: Props) {
               keyExtractor={(item) => item.id}
               renderItem={renderItem}
               style={styles.list}
-              contentContainerStyle={{ paddingBottom: 8 }}
+              contentContainerStyle={styles.listContent}
               showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="on-drag"
               refreshControl={
                 <RefreshControl
                   refreshing={refreshing}
@@ -371,7 +397,7 @@ export default function GroceryListModal({ visible, onClose }: Props) {
               }
               ListFooterComponent={
                 checkedItems.length > 0 ? (
-                  <View>
+                  <View style={styles.checkedSection}>
                     {/* Checked section toggle */}
                     <TouchableOpacity
                       style={styles.checkedHeader}
@@ -399,7 +425,7 @@ export default function GroceryListModal({ visible, onClose }: Props) {
             />
           )}
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -410,14 +436,26 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.45)',
     justifyContent: 'flex-end',
   },
+  backdrop: {
+    ...StyleSheet.absoluteFill,
+  },
   sheet: {
     backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    paddingTop: 16,
-    paddingHorizontal: 14,
-    paddingBottom: 32,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingTop: 10,
+    paddingHorizontal: 16,
+    paddingBottom: Platform.OS === 'ios' ? 32 : 18,
+    height: '80%',
     maxHeight: '90%',
+  },
+  dragHandle: {
+    width: 38,
+    height: 4,
+    backgroundColor: '#E2E8F0',
+    borderRadius: 2,
+    alignSelf: 'center',
+    marginBottom: 12,
   },
   header: {
     flexDirection: 'row',
@@ -515,6 +553,7 @@ const styles = StyleSheet.create({
 
   // List
   list: { flex: 1 },
+  listContent: { paddingBottom: 24 },
   itemRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -534,6 +573,9 @@ const styles = StyleSheet.create({
   deleteBtn: { padding: 6 },
 
   // Checked section
+  checkedSection: {
+    paddingBottom: 16,
+  },
   checkedHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -554,7 +596,9 @@ const styles = StyleSheet.create({
 
   // Empty state
   emptyBox: {
+    flex: 1,
     alignItems: 'center',
+    justifyContent: 'center',
     paddingVertical: 40,
     gap: 8,
   },

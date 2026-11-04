@@ -1,4 +1,5 @@
 import { supabaseAdmin } from './supabase';
+import { notifyLeaveRequested, notifyLeaveApproved } from './api';
 
 export interface LeaveRequestMetadata {
   type: 'leave_request';
@@ -144,6 +145,12 @@ export async function submitLeaveRequest(params: {
       return { success: false, error: error?.message || 'Failed to submit leave request.' };
     }
 
+    notifyLeaveRequested({
+      logId: data.id,
+      duration: leaveMeta.duration,
+      reason: leaveMeta.reason,
+    }).catch((e) => console.warn('[Push] Leave requested notification failed:', e));
+
     return { success: true, logId: data.id };
   } catch (err: any) {
     return { success: false, error: err?.message || 'Failed to submit leave request.' };
@@ -236,6 +243,13 @@ export async function approveLeaveRequest(params: {
           .eq('id', requester.id);
       }
     }
+
+    notifyLeaveApproved({
+      logId: params.logId,
+      workerUserId: log.user_id,
+      isFullyApproved,
+      duration: currentMeta.duration,
+    }).catch((e) => console.warn('[Push] Leave approved notification failed:', e));
 
     return { success: true, isFullyApproved };
   } catch (err: any) {

@@ -98,12 +98,18 @@ export function setupNotificationListeners() {
     const data = response.notification.request.content.data;
     console.log('👆 User tapped notification with data:', data);
 
-    if (data?.type === 'nudge') {
+    if (data?.type === 'nudge' || data?.type === 'leave_requested' || data?.type === 'leave_approved') {
       // Navigate to feed / home screen
       router.push('/(tabs)/feed');
     } else if (data?.type === 'task_pending_verification' || data?.type === 'task_approved') {
       // Navigate to tasks tab
       router.push('/(tabs)/tasks');
+    } else if (data?.type === 'marketplace_created' || data?.type === 'marketplace_claimed') {
+      // Navigate to marketplace tab
+      router.push('/(tabs)/marketplace');
+    } else if (data?.type === 'zomato_nudge') {
+      // Navigate to dashboard
+      router.push('/(tabs)');
     }
   });
 

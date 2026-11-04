@@ -14,7 +14,7 @@ import {
   Platform,
 } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { fetchTasks } from '../../lib/api';
+import { fetchTasks, notifyChoreLogged } from '../../lib/api';
 import { supabase, supabaseAdmin } from '../../lib/supabase';
 import { useAuthStore } from '../../store/useAuthStore';
 import { useHouseStore, TaskTemplate } from '../../store/useHouseStore';
@@ -120,6 +120,15 @@ export default function TasksScreen() {
       if (error) {
         throw new Error(error.message);
       }
+
+      // Broadcast push notification to housemates via backend
+      notifyChoreLogged({
+        taskId: selectedTask.id,
+        logId: log.id,
+        taskName: selectedTask.name,
+      }).catch((notifyErr) => {
+        console.warn('[PushNotification] Failed to broadcast chore notification:', notifyErr);
+      });
 
       setSuccessMsg(`Logged! Waiting for 1 roommate approval to award +${selectedTask.base_credits} XP.`);
       setNotes('');

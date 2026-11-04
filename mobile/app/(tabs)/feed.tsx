@@ -17,6 +17,7 @@ import { supabase, supabaseAdmin } from '../../lib/supabase';
 import { useAuthStore } from '../../store/useAuthStore';
 import { COLORS, FONTS, SPACING, RADIUS } from '../../constants/theme';
 import AppIcon from '../../components/AppIcon';
+import { notifyChoreApproved } from '../../lib/api';
 import {
   parseLogNotes,
   encodeLogNotes,
@@ -137,6 +138,14 @@ export default function FeedScreen() {
       );
 
       const res = await verifyTaskLog(logId, profile.id, profile.username);
+      if (res.success && targetItem?.user_id) {
+        notifyChoreApproved({
+          logId,
+          workerUserId: targetItem.user_id,
+          taskName: (targetItem as any).task?.name || 'chore',
+          award: targetItem.credits_awarded || 20,
+        }).catch((err) => console.warn('[PushNotification] Failed to notify chore creator:', err));
+      }
       if (res.success) {
         if (Platform.OS === 'web') {
           alert('Approved! 👍 XP points have been awarded.');
