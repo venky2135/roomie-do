@@ -250,3 +250,43 @@ CREATE POLICY "user_device_tokens_manage_own" ON user_device_tokens
   FOR ALL
   USING (user_id = auth.uid())
   WITH CHECK (user_id = auth.uid());
+
+
+-- ============================================================
+-- GROCERY ITEMS (Shared House Grocery List)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS grocery_items (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  house_id    UUID NOT NULL REFERENCES houses(id) ON DELETE CASCADE,
+  added_by    UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  name        TEXT NOT NULL,
+  emoji       TEXT DEFAULT '🛒',
+  quantity    TEXT,
+  is_checked  BOOLEAN DEFAULT FALSE,
+  checked_by  UUID REFERENCES profiles(id) ON DELETE SET NULL,
+  checked_at  TIMESTAMPTZ,
+  created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_grocery_items_house_id ON grocery_items(house_id);
+
+ALTER TABLE grocery_items ENABLE ROW LEVEL SECURITY;
+
+-- House members can read all items in their house
+CREATE POLICY "grocery_items_read" ON grocery_items FOR SELECT
+  USING (house_id = get_my_house_id());
+
+-- Any house member can insert items into their house
+CREATE POLICY "grocery_items_insert" ON grocery_items FOR INSERT
+  WITH CHECK (house_id = get_my_house_id() AND added_by = auth.uid());
+
+-- Any house member can update items (check-off / re-open)
+CREATE POLICY "grocery_items_update" ON grocery_items FOR UPDATE
+  USING (house_id = get_my_house_id());
+
+-- Only the adder can delete their own item
+CREATE POLICY "grocery_items_delete" ON grocery_items FOR DELETE
+  USING (added_by = auth.uid());
+
+-- Enable realtime for live cross-roommate sync
+ALTER PUBLICATION supabase_realtime ADD TABLE grocery_items;

@@ -19,15 +19,8 @@ import { useAuthStore } from '../../store/useAuthStore';
 import { COLORS, FONTS, SPACING, RADIUS } from '../../constants/theme';
 import { submitLeaveRequest } from '../../lib/leaveWorkflow';
 import { isLogApproved } from '../../lib/taskWorkflow';
-
-const BADGES_LIST = [
-  { id: '1', icon: 'restaurant-outline' as const, name: 'First Cook', earned: true },
-  { id: '2', icon: 'flame-outline' as const, name: '7-Day Streak', earned: false },
-  { id: '3', icon: 'checkmark-circle-outline' as const, name: 'Chore Master', earned: true },
-  { id: '4', icon: 'sparkles-outline' as const, name: 'Super Cleaner', earned: false },
-  { id: '5', icon: 'cart-outline' as const, name: 'Marketplace Hero', earned: true },
-  { id: '6', icon: 'trophy-outline' as const, name: 'Weekend Champ', earned: false },
-];
+import GroceryListModal from '../../components/GroceryListModal';
+import BadgesJourney from '../../components/BadgesJourney';
 
 export default function ProfileScreen() {
   const { profile, signOut, refreshProfile } = useAuthStore();
@@ -179,30 +172,8 @@ export default function ProfileScreen() {
         </View>
       </View>
 
-      {/* Badges Section with Native Icons */}
-      <View style={styles.sectionHeaderRow}>
-        <Ionicons name="ribbon-outline" size={20} color={COLORS.text} />
-        <Text style={styles.sectionTitle}>Household Badges</Text>
-      </View>
-      <View style={styles.badgeGrid}>
-        {BADGES_LIST.map((badge) => (
-          <View key={badge.id} style={[styles.badge, !badge.earned && styles.badgeLocked]}>
-            <View style={[styles.badgeIconBox, !badge.earned && styles.badgeIconBoxLocked]}>
-              <Ionicons
-                name={badge.icon}
-                size={22}
-                color={badge.earned ? COLORS.primary : COLORS.textLight}
-              />
-            </View>
-            <Text style={[styles.badgeName, !badge.earned && styles.badgeNameLocked]}>{badge.name}</Text>
-            {badge.earned ? (
-              <View style={styles.earnedDot} />
-            ) : (
-              <Text style={styles.lockedText}>Locked</Text>
-            )}
-          </View>
-        ))}
-      </View>
+      {/* ── Animated Badge Journey ── */}
+      <BadgesJourney profile={profile} approvedCount={completedCount} />
 
       {/* ─── Quick Actions Heading & Square Container ─── */}
       <View style={styles.sectionHeaderRow}>
@@ -258,7 +229,7 @@ export default function ProfileScreen() {
           <Text style={styles.actionBtnSub}>Vacation pass</Text>
         </TouchableOpacity>
 
-        {/* Grocery List (Dummy) Button */}
+        {/* Grocery List Button */}
         <TouchableOpacity
           style={styles.actionSquareBtn}
           onPress={() => setGroceryModalVisible(true)}
@@ -266,9 +237,6 @@ export default function ProfileScreen() {
         >
           <View style={[styles.actionIconCircle, { backgroundColor: '#FEF3C7' }]}>
             <Ionicons name="cart" size={20} color="#D97706" />
-          </View>
-          <View style={styles.actionTagBadge}>
-            <Text style={styles.actionTagText}>Dummy</Text>
           </View>
           <Text style={styles.actionBtnLabel}>Grocery List</Text>
           <Text style={styles.actionBtnSub}>Shared items</Text>
@@ -394,76 +362,11 @@ export default function ProfileScreen() {
         </View>
       </Modal>
 
-      {/* ─── Modal: Grocery List (Dummy Preview) ─── */}
-      <Modal visible={groceryModalVisible} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <View style={styles.modalHeader}>
-              <View style={styles.modalTitleRow}>
-                <View style={styles.groceryIconBadge}>
-                  <Ionicons name="cart" size={18} color="#D97706" />
-                </View>
-                <View>
-                  <Text style={styles.modalTitle}>Shared Grocery List</Text>
-                  <Text style={styles.grocerySubtitle}>Household shopping & supplies</Text>
-                </View>
-              </View>
-              <TouchableOpacity onPress={() => setGroceryModalVisible(false)}>
-                <Ionicons name="close" size={22} color={COLORS.textSecondary} />
-              </TouchableOpacity>
-            </View>
-
-            <Text style={styles.modalSub}>
-              Keep track of groceries, pantry essentials, and shared cleaning supplies with your roommates.
-            </Text>
-
-            {/* Dummy grocery items */}
-            <View style={styles.groceryListPreview}>
-              {[
-                { name: 'Milk (Whole, 2L)', by: 'Added by Roommate', icon: '🥛', checked: true },
-                { name: 'Eggs (12 Pack)', by: 'Added by Roommate', icon: '🥚', checked: true },
-                { name: 'Dish Soap & Sponges', by: 'Added by You', icon: '🧽', checked: false },
-                { name: 'Trash Bags & Napkins', by: 'Added by You', icon: '🧻', checked: false },
-                { name: 'Coffee Beans', by: 'Added by Roommate', icon: '☕', checked: false },
-              ].map((item, idx) => (
-                <View key={idx} style={styles.groceryItemRow}>
-                  <Ionicons
-                    name={item.checked ? 'checkbox' : 'square-outline'}
-                    size={18}
-                    color={item.checked ? COLORS.primary : COLORS.textLight}
-                  />
-                  <Text style={styles.groceryItemEmoji}>{item.icon}</Text>
-                  <View style={{ flex: 1 }}>
-                    <Text
-                      style={[
-                        styles.groceryItemName,
-                        item.checked && styles.groceryItemChecked,
-                      ]}
-                    >
-                      {item.name}
-                    </Text>
-                    <Text style={styles.groceryItemSub}>{item.by}</Text>
-                  </View>
-                </View>
-              ))}
-            </View>
-
-            <View style={styles.grocerySoonBox}>
-              <Ionicons name="sparkles" size={14} color="#D97706" />
-              <Text style={styles.grocerySoonText}>
-                Full collaborative sync & grocery expense splitting coming in the next update!
-              </Text>
-            </View>
-
-            <TouchableOpacity
-              style={styles.closeGroceryBtn}
-              onPress={() => setGroceryModalVisible(false)}
-            >
-              <Text style={styles.closeGroceryBtnText}>Got it</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
+      {/* ─── Grocery List Modal ─── */}
+      <GroceryListModal
+        visible={groceryModalVisible}
+        onClose={() => setGroceryModalVisible(false)}
+      />
     </ScrollView>
   );
 }
@@ -511,36 +414,6 @@ const styles = StyleSheet.create({
   statLbl: { fontSize: 9, color: '#7E7E8F', marginTop: 1, fontWeight: '600' },
   sectionHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 6 },
   sectionTitle: { fontSize: 12, fontWeight: '700', color: '#1A1A24' },
-  badgeGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-    marginBottom: 16,
-  },
-  badge: {
-    width: '31%',
-    backgroundColor: '#FFFFFF',
-    borderRadius: RADIUS.sm,
-    padding: 8,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#ECECEC',
-  },
-  badgeLocked: { opacity: 0.5, backgroundColor: '#FAFAFA' },
-  badgeIconBox: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: '#E8F5E9',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 3,
-  },
-  badgeIconBoxLocked: { backgroundColor: '#EEEEEE' },
-  badgeName: { fontSize: 10, fontWeight: '600', color: '#1A1A24', textAlign: 'center', marginBottom: 2 },
-  badgeNameLocked: { color: '#A0A0B0' },
-  earnedDot: { width: 5, height: 5, borderRadius: 2.5, backgroundColor: COLORS.success },
-  lockedText: { fontSize: 8, color: '#A0A0B0', fontWeight: '500' },
   // Quick Actions Container & Square Small Buttons
   quickActionsContainer: {
     backgroundColor: '#FFFFFF',
@@ -601,59 +474,6 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     textTransform: 'uppercase',
   },
-
-  // Grocery List Dummy Preview Styles
-  groceryIconBadge: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    backgroundColor: '#FEF3C7',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  grocerySubtitle: { fontSize: 9, color: '#7E7E8F', marginTop: 1 },
-  groceryListPreview: {
-    backgroundColor: '#F8F9FA',
-    borderRadius: 8,
-    padding: 8,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    marginBottom: 10,
-    gap: 6,
-  },
-  groceryItemRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 4,
-    paddingHorizontal: 4,
-    gap: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
-  },
-  groceryItemEmoji: { fontSize: 16 },
-  groceryItemName: { fontSize: 11, fontWeight: '600', color: '#1E293B' },
-  groceryItemChecked: { textDecorationLine: 'line-through', color: '#94A3B8' },
-  groceryItemSub: { fontSize: 8, color: '#94A3B8' },
-  grocerySoonBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFFBEB',
-    padding: 8,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#FDE68A',
-    gap: 6,
-    marginBottom: 12,
-  },
-  grocerySoonText: { fontSize: 9, color: '#92400E', flex: 1, lineHeight: 13, fontWeight: '500' },
-  closeGroceryBtn: {
-    backgroundColor: COLORS.primary,
-    borderRadius: RADIUS.sm,
-    paddingVertical: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  closeGroceryBtnText: { color: '#FFF', fontSize: 12, fontWeight: '700' },
 
   // Modal styles
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', padding: 14 },

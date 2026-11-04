@@ -149,20 +149,10 @@ export default function TasksScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Header with Refresh Button */}
-      <View style={styles.headerRow}>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.title}>Log a Chore</Text>
-          <Text style={styles.sub}>Mark a chore done to submit it for roommate verification</Text>
-        </View>
-        <TouchableOpacity
-          style={styles.refreshBtn}
-          onPress={() => loadTasks(true)}
-          disabled={refreshing || loading}
-          accessibilityLabel="Refresh chores"
-        >
-          <Ionicons name="refresh" size={16} color={COLORS.primary} />
-        </TouchableOpacity>
+      {/* Header */}
+      <View style={styles.header}>
+        <Text style={styles.title}>Log a Chore</Text>
+        <Text style={styles.sub}>Mark a chore done to submit it for roommate verification</Text>
       </View>
 
       {loading && !refreshing ? (
@@ -313,23 +303,11 @@ export default function TasksScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F8F9FA', paddingTop: 44, paddingHorizontal: 12 },
-  headerRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
+  header: {
     marginBottom: 8,
   },
   title: { fontSize: 16, fontWeight: '800', color: '#1A1A24' },
   sub: { fontSize: 11, color: '#7E7E8F', marginTop: 2 },
-  refreshBtn: {
-    padding: 8,
-    borderRadius: RADIUS.full,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#ECECEC',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   categorySection: { marginBottom: 10 },
   categoryBadge: {
     flexDirection: 'row',
