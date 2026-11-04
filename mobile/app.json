@@ -4,7 +4,15 @@
     "slug": "mobile",
     "scheme": "roomiedo",
     "plugins": [
-      "expo-router"
+      "expo-router",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#3B82F6",
+          "defaultChannel": "roomiedo_general"
+        }
+      ]
     ],
     "version": "1.0.0",
     "orientation": "portrait",
@@ -15,6 +23,7 @@
     },
     "android": {
       "package": "com.roomiedo.app",
+      "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",

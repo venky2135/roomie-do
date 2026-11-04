@@ -4,6 +4,7 @@ const express_1 = require("express");
 const authMiddleware_1 = require("../middleware/authMiddleware");
 const supabaseClient_1 = require("../supabaseClient");
 const badgeService_1 = require("../services/badgeService");
+const notificationService_1 = require("../services/notificationService");
 const router = (0, express_1.Router)();
 // POST /api/tasks/log — Log a completed task
 router.post('/log', authMiddleware_1.authMiddleware, async (req, res) => {
@@ -26,7 +27,7 @@ router.post('/log', authMiddleware_1.authMiddleware, async (req, res) => {
     // Verify user belongs to that house
     const { data: profile } = await supabaseClient_1.supabase
         .from('profiles')
-        .select('house_id')
+        .select('house_id, username')
         .eq('id', userId)
         .single();
     if (profile?.house_id !== task.house_id) {
@@ -61,6 +62,16 @@ router.post('/log', authMiddleware_1.authMiddleware, async (req, res) => {
         res.status(500).json({ error: 'Failed to log task', details: logError.message });
         return;
     }
+    // Notify housemates about the logged chore
+    notificationService_1.NotificationService.sendToHouse(task.house_id, {
+        title: 'Chore Awaiting Approval 🧹',
+        body: `${profile?.username || 'A roommate'} finished "${task.name}". Tap to review and approve!`,
+        data: {
+            type: 'task_pending_verification',
+            logId: log.id,
+            taskId: task.id,
+        },
+    }, userId).catch((err) => console.error('Failed to dispatch chore push notification:', err));
     res.json({
         success: true,
         log,
@@ -133,6 +144,15 @@ router.post('/verify/:logId', authMiddleware_1.authMiddleware, async (req, res) 
         .eq('id', log.user_id);
     // Check badges for creator
     const newBadges = await (0, badgeService_1.checkAndAwardBadges)(log.user_id, creator.house_id);
+    // Notify creator that chore was approved
+    notificationService_1.NotificationService.sendToUser(log.user_id, {
+        title: 'Chore Approved! 🎉',
+        body: `${approver.username} approved your chore. +${award} XP awarded!`,
+        data: {
+            type: 'task_approved',
+            logId: String(logId),
+        },
+    }).catch((err) => console.error('Failed to notify creator of approval:', err));
     res.json({
         success: true,
         awardedCredits: award,

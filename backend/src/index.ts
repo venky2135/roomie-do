@@ -7,6 +7,7 @@ import houseRoutes from './routes/house';
 import leaderboardRoutes from './routes/leaderboard';
 import analyticsRoutes from './routes/analytics';
 import nudgeRoutes from './routes/nudge';
+import notificationRoutes from './routes/notifications';
 import { startWeeklyCron } from './cron/weeklyReset';
 
 dotenv.config();
@@ -29,6 +30,7 @@ app.use('/api/house', houseRoutes);
 app.use('/api/leaderboard', leaderboardRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/nudge', nudgeRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 // Start cron jobs
 startWeeklyCron();
@@ -38,4 +40,3 @@ app.listen(PORT, () => {
 });
 
 export default app;
-

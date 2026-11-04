@@ -12,6 +12,7 @@ const house_1 = __importDefault(require("./routes/house"));
 const leaderboard_1 = __importDefault(require("./routes/leaderboard"));
 const analytics_1 = __importDefault(require("./routes/analytics"));
 const nudge_1 = __importDefault(require("./routes/nudge"));
+const notifications_1 = __importDefault(require("./routes/notifications"));
 const weeklyReset_1 = require("./cron/weeklyReset");
 dotenv_1.default.config();
 const app = (0, express_1.default)();
@@ -29,6 +30,7 @@ app.use('/api/house', house_1.default);
 app.use('/api/leaderboard', leaderboard_1.default);
 app.use('/api/analytics', analytics_1.default);
 app.use('/api/nudge', nudge_1.default);
+app.use('/api/notifications', notifications_1.default);
 // Start cron jobs
 (0, weeklyReset_1.startWeeklyCron)();
 app.listen(PORT, () => {

@@ -3,6 +3,7 @@ import { authMiddleware, AuthRequest } from '../middleware/authMiddleware';
 import { supabase } from '../supabaseClient';
 import { calculateCredits } from '../services/creditService';
 import { checkAndAwardBadges } from '../services/badgeService';
+import { NotificationService } from '../services/notificationService';
 
 const router = Router();
 
@@ -31,7 +32,7 @@ router.post('/log', authMiddleware, async (req: AuthRequest, res: Response): Pro
   // Verify user belongs to that house
   const { data: profile } = await supabase
     .from('profiles')
-    .select('house_id')
+    .select('house_id, username')
     .eq('id', userId)
     .single();
 
@@ -69,6 +70,21 @@ router.post('/log', authMiddleware, async (req: AuthRequest, res: Response): Pro
     res.status(500).json({ error: 'Failed to log task', details: logError.message });
     return;
   }
+
+  // Notify housemates about the logged chore
+  NotificationService.sendToHouse(
+    task.house_id,
+    {
+      title: 'Chore Awaiting Approval 🧹',
+      body: `${profile?.username || 'A roommate'} finished "${task.name}". Tap to review and approve!`,
+      data: {
+        type: 'task_pending_verification',
+        logId: log.id,
+        taskId: task.id,
+      },
+    },
+    userId
+  ).catch((err) => console.error('Failed to dispatch chore push notification:', err));
 
   res.json({
     success: true,
@@ -155,6 +171,16 @@ router.post('/verify/:logId', authMiddleware, async (req: AuthRequest, res: Resp
 
   // Check badges for creator
   const newBadges = await checkAndAwardBadges(log.user_id, creator.house_id);
+
+  // Notify creator that chore was approved
+  NotificationService.sendToUser(log.user_id, {
+    title: 'Chore Approved! 🎉',
+    body: `${approver.username} approved your chore. +${award} XP awarded!`,
+    data: {
+      type: 'task_approved',
+      logId: String(logId),
+    },
+  }).catch((err) => console.error('Failed to notify creator of approval:', err));
 
   res.json({
     success: true,

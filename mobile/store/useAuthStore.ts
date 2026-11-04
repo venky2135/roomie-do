@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { supabase } from '../lib/supabase';
+import { unregisterPushNotificationsAsync } from '../lib/notifications';
 
 export interface Profile {
   id: string;
@@ -67,8 +68,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   signOut: async () => {
+    try {
+      await unregisterPushNotificationsAsync();
+    } catch (e) {
+      console.warn('Failed to unregister push notifications during signOut:', e);
+    }
     await supabase.auth.signOut();
     set({ session: null, profile: null, initialized: true, loading: false });
   },
 }));
-

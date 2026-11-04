@@ -77,5 +77,15 @@ export const fetchAnalytics = (houseId: string) =>
 export const sendNudge = (toUserId: string) =>
   api.post('/api/nudge', { toUserId });
 
+// ─── Notifications ───────────────────────────────────────
+export const registerDeviceToken = (token: string, deviceType: string = 'android') =>
+  api.post('/api/notifications/register-token', { token, deviceType });
+
+export const unregisterDeviceToken = (token: string) =>
+  api.delete('/api/notifications/unregister-token', { data: { token } });
+
+export const sendTestNotification = (title?: string, body?: string) =>
+  api.post('/api/notifications/test', { title, body });
+
 export default api;
 

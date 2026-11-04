@@ -3,11 +3,27 @@ import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { supabase } from '../lib/supabase';
 import { useAuthStore } from '../store/useAuthStore';
+import { registerForPushNotificationsAsync, setupNotificationListeners } from '../lib/notifications';
 
 export default function RootLayout() {
   const { session, profile, initialized, setSession, fetchProfile, setInitialized } = useAuthStore();
   const segments = useSegments();
   const router = useRouter();
+
+  // Notification listeners (foreground reception + tap interaction)
+  useEffect(() => {
+    const unsubscribe = setupNotificationListeners();
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
+  // Register device FCM token whenever a valid user session is active
+  useEffect(() => {
+    if (session?.user?.id) {
+      registerForPushNotificationsAsync();
+    }
+  }, [session?.user?.id]);
 
   useEffect(() => {
     // Listen for auth state changes
@@ -61,4 +77,3 @@ export default function RootLayout() {
     </>
   );
 }
-

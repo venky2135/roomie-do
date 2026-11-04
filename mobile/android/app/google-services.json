@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1090200053888",
+    "project_id": "roomie-doo-205c3",
+    "storage_bucket": "roomie-doo-205c3.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1090200053888:android:e4d28bebad1d38d9b49e65",
+        "android_client_info": {
+          "package_name": "com.roomiedo.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDHyviTu1TFOUrOV8tShHpZAQFAelky0a0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

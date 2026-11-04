@@ -229,3 +229,24 @@ INSERT INTO badges (name, icon, description, condition_type, condition_value) VA
 -- Bucket name: avatars      (public: false)
 -- Bucket name: task-photos  (public: false)
 
+
+
+-- ============================================================
+-- USER DEVICE TOKENS (Push Notifications / Firebase FCM)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS user_device_tokens (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id     UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  token       TEXT NOT NULL UNIQUE,
+  device_type TEXT DEFAULT 'android', -- 'android' | 'ios'
+  updated_at  TIMESTAMPTZ DEFAULT NOW(),
+  created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_device_tokens_user_id ON user_device_tokens(user_id);
+ALTER TABLE user_device_tokens ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "user_device_tokens_manage_own" ON user_device_tokens
+  FOR ALL
+  USING (user_id = auth.uid())
+  WITH CHECK (user_id = auth.uid());

@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
 const authMiddleware_1 = require("../middleware/authMiddleware");
 const supabaseClient_1 = require("../supabaseClient");
+const notificationService_1 = require("../services/notificationService");
 const router = (0, express_1.Router)();
 // POST /api/nudge — Send a nudge to a roommate
 router.post('/', authMiddleware_1.authMiddleware, async (req, res) => {
@@ -33,8 +34,18 @@ router.post('/', authMiddleware_1.authMiddleware, async (req, res) => {
         to_user_id: toUserId,
         sent_at: new Date().toISOString(),
     });
-    // Push notification would be triggered here (Expo push tokens)
-    // For now, the mobile app polls for nudges via Supabase Realtime
+    // Send FCM Push notification asynchronously
+    notificationService_1.NotificationService.sendToUser(toUserId, {
+        title: 'Roomie Nudge! 👋',
+        body: `${fromProfile.username} gave you a gentle nudge!`,
+        data: {
+            type: 'nudge',
+            fromUserId,
+            fromUsername: fromProfile.username,
+        },
+    }).catch((err) => {
+        console.error('Failed to dispatch nudge push notification:', err);
+    });
     res.json({
         success: true,
         message: `Nudge sent from ${fromProfile.username}`,
