@@ -6,6 +6,11 @@ import {
   ScrollView,
   TouchableOpacity,
   RefreshControl,
+  TextInput,
+  Modal,
+  Alert,
+  Platform,
+  ActivityIndicator,
 } from 'react-native';
 import { router } from 'expo-router';
 import Ionicons from '@expo/vector-icons/Ionicons';
@@ -14,6 +19,8 @@ import { fetchLeaderboard } from '../../lib/api';
 import { useAuthStore } from '../../store/useAuthStore';
 import { COLORS, RADIUS } from '../../constants/theme';
 import { fetchActiveLeaves } from '../../lib/leaveWorkflow';
+import { isLogApproved } from '../../lib/taskWorkflow';
+import { fetchWeeklyStakes, saveWeeklyStakes, WeeklyStakes } from '../../lib/stakesWorkflow';
 
 type Period = 'week' | 'month' | 'all';
 
@@ -34,6 +41,14 @@ export default function HomeScreen() {
   const [period, setPeriod] = useState<Period>('week');
   const [todayCount, setTodayCount] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
+  const [weeklyStakes, setWeeklyStakes] = useState<WeeklyStakes>({
+    bounty: 'Winner gets treated to weekend takeout dinner by housemates 🍕',
+    penalty: 'Loser does the weekend kitchen deep clean & takes out the trash 🧹',
+  });
+  const [editingStakes, setEditingStakes] = useState(false);
+  const [bountyInput, setBountyInput] = useState('');
+  const [penaltyInput, setPenaltyInput] = useState('');
+  const [savingStakes, setSavingStakes] = useState(false);
 
   const loadData = useCallback(async (p: Period = period) => {
     if (!profile?.house_id) return;
@@ -44,15 +59,24 @@ export default function HomeScreen() {
       setOnLeaveUserIds(leaves);
     } catch (_) {}
 
-    // Today's completed tasks by current user
+    // Load weekly stakes (bounty & penalty)
+    try {
+      const stakes = await fetchWeeklyStakes(profile.house_id);
+      setWeeklyStakes(stakes);
+      setBountyInput(stakes.bounty);
+      setPenaltyInput(stakes.penalty);
+    } catch (_) {}
+
+    // Today's completed tasks by current user (approved only)
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const { count } = await supabase
+    const { data: todayLogs } = await supabase
       .from('task_logs')
-      .select('*', { count: 'exact', head: true })
+      .select('notes')
       .eq('user_id', profile.id)
       .gte('completed_at', today.toISOString());
-    setTodayCount(count ?? 0);
+    const count = todayLogs?.filter((l) => isLogApproved(l.notes)).length ?? 0;
+    setTodayCount(count);
 
     // Leaderboard with backend + direct Supabase fallback
     try {
@@ -92,14 +116,16 @@ export default function HomeScreen() {
         const memberIds = members.map((m) => m.id);
         const { data: logs } = await supabase
           .from('task_logs')
-          .select('user_id, credits_awarded')
+          .select('user_id, credits_awarded, notes')
           .in('user_id', memberIds)
           .gte('completed_at', sinceDate.toISOString());
 
         const creditMap: Record<string, number> = {};
         members.forEach((m) => (creditMap[m.id] = 0));
         logs?.forEach((l) => {
-          creditMap[l.user_id] = (creditMap[l.user_id] || 0) + (l.credits_awarded || 0);
+          if (isLogApproved(l.notes)) {
+            creditMap[l.user_id] = (creditMap[l.user_id] || 0) + (l.credits_awarded || 0);
+          }
         });
 
         const sorted = members
@@ -117,12 +143,66 @@ export default function HomeScreen() {
 
   useEffect(() => {
     loadData(period);
-  }, [period, loadData]);
+    if (!profile?.house_id) return;
+
+    const channel = supabase
+      .channel('home-feed-sync')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'task_logs' }, () => {
+        loadData(period);
+        refreshProfile();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [profile?.house_id, period, loadData, refreshProfile]);
 
   const onRefresh = async () => {
     setRefreshing(true);
     await Promise.all([loadData(period), refreshProfile()]);
     setRefreshing(false);
+  };
+
+  const openEditStakes = () => {
+    setBountyInput(weeklyStakes.bounty);
+    setPenaltyInput(weeklyStakes.penalty);
+    setEditingStakes(true);
+  };
+
+  const handleSaveStakes = async () => {
+    if (!profile?.house_id || !profile?.id) return;
+    if (!bountyInput.trim()) {
+      if (Platform.OS === 'web') alert('Please enter the bounty for the winner');
+      else Alert.alert('Required', 'Please enter the bounty for the winner');
+      return;
+    }
+    if (!penaltyInput.trim()) {
+      if (Platform.OS === 'web') alert('Please enter the penalty for the loser');
+      else Alert.alert('Required', 'Please enter the penalty for the loser');
+      return;
+    }
+
+    setSavingStakes(true);
+    const res = await saveWeeklyStakes({
+      houseId: profile.house_id,
+      bounty: bountyInput.trim(),
+      penalty: penaltyInput.trim(),
+      userId: profile.id,
+    });
+    setSavingStakes(false);
+
+    if (res.success && res.stakes) {
+      setWeeklyStakes(res.stakes);
+      setEditingStakes(false);
+      const msg = 'Weekly bounty & penalty updated successfully!';
+      if (Platform.OS === 'web') alert(msg);
+      else Alert.alert('Updated! 🏆', msg);
+    } else {
+      const err = res.error || 'Failed to update weekly stakes';
+      if (Platform.OS === 'web') alert(err);
+      else Alert.alert('Error', err);
+    }
   };
 
   const topper = leaderboard[0];
@@ -372,6 +452,150 @@ export default function HomeScreen() {
         </>
         )}
       </View>
+
+      {/* ─── Weekly Bounty & Penalty Section ─── */}
+      <View style={styles.stakesCard}>
+        <View style={styles.stakesHeaderRow}>
+          <View style={styles.stakesHeaderLeft}>
+            <View style={styles.stakesIconBadge}>
+              <Ionicons name="gift" size={15} color="#D97706" />
+            </View>
+            <View>
+              <Text style={styles.stakesSectionTitle}>Weekly Bounty & Penalty</Text>
+              <Text style={styles.stakesSectionSub}>House stakes for 1st place & last place</Text>
+            </View>
+          </View>
+          {profile?.is_admin && (
+            <TouchableOpacity style={styles.stakesEditBtn} onPress={openEditStakes}>
+              <Ionicons name="create-outline" size={12} color={COLORS.primary} />
+              <Text style={styles.stakesEditBtnText}>Edit Stakes</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {/* 🏆 Winner Bounty Card */}
+        <View style={styles.bountyBox}>
+          <View style={styles.stakesBadgeHeader}>
+            <View style={styles.bountyTag}>
+              <Ionicons name="trophy" size={11} color="#15803D" />
+              <Text style={styles.bountyTagText}>WINNER BOUNTY</Text>
+            </View>
+            <Text style={styles.stakesTargetLabel}>#1 Housemate Prize</Text>
+          </View>
+          <Text style={styles.stakesText}>{weeklyStakes.bounty}</Text>
+        </View>
+
+        {/* ⚠️ Loser Penalty Card */}
+        <View style={styles.penaltyBox}>
+          <View style={styles.stakesBadgeHeader}>
+            <View style={styles.penaltyTag}>
+              <Ionicons name="alert-circle" size={11} color="#DC2626" />
+              <Text style={styles.penaltyTagText}>LOSER PENALTY</Text>
+            </View>
+            <Text style={styles.stakesTargetLabel}>Last Place Price</Text>
+          </View>
+          <Text style={styles.stakesText}>{weeklyStakes.penalty}</Text>
+        </View>
+
+        {!profile?.is_admin && (
+          <Text style={styles.stakesFooterNote}>
+            💡 Staked weekly by house admin. Top the leaderboard to claim the bounty!
+          </Text>
+        )}
+      </View>
+
+      {/* Modal: Edit Weekly Bounty & Penalty (Admin Only) */}
+      <Modal visible={editingStakes} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <View style={styles.modalTitleRow}>
+                <Ionicons name="trophy" size={20} color="#D97706" />
+                <Text style={styles.modalTitle}>Update Weekly Stakes</Text>
+              </View>
+              <TouchableOpacity onPress={() => setEditingStakes(false)}>
+                <Ionicons name="close" size={22} color={COLORS.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.modalSub}>
+              Set the price for the winner (bounty) and the price for the loser (penalty) this week.
+            </Text>
+
+            {/* Winner Bounty Input */}
+            <View style={styles.modalInputGroup}>
+              <View style={styles.inputLabelRow}>
+                <Ionicons name="gift" size={13} color="#15803D" />
+                <Text style={styles.inputLabel}>Winner Bounty (Price for the Winner)</Text>
+              </View>
+              <TextInput
+                style={styles.modalTextInput}
+                value={bountyInput}
+                onChangeText={setBountyInput}
+                placeholder="e.g. Winner gets treated to takeout dinner by roommates 🍕"
+                placeholderTextColor={COLORS.textLight}
+                multiline
+                numberOfLines={2}
+              />
+              <View style={styles.suggestionRow}>
+                {['🍕 Free Dinner', '☕ Free Coffee (1 Wk)', '👑 Chore Pass (3d)'].map((sug) => (
+                  <TouchableOpacity
+                    key={sug}
+                    style={styles.suggestionPill}
+                    onPress={() => setBountyInput(sug)}
+                  >
+                    <Text style={styles.suggestionText}>{sug}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+
+            {/* Loser Penalty Input */}
+            <View style={styles.modalInputGroup}>
+              <View style={styles.inputLabelRow}>
+                <Ionicons name="alert-circle" size={13} color="#DC2626" />
+                <Text style={styles.inputLabel}>Loser Penalty (Price for the Loser)</Text>
+              </View>
+              <TextInput
+                style={styles.modalTextInput}
+                value={penaltyInput}
+                onChangeText={setPenaltyInput}
+                placeholder="e.g. Loser must wash dishes and deep clean kitchen on Sunday 🧽"
+                placeholderTextColor={COLORS.textLight}
+                multiline
+                numberOfLines={2}
+              />
+              <View style={styles.suggestionRow}>
+                {['🧹 Sunday Deep Clean', '🗑️ Trash Duty (2 Wks)', '🍳 Cook Breakfast'].map((sug) => (
+                  <TouchableOpacity
+                    key={sug}
+                    style={styles.suggestionPill}
+                    onPress={() => setPenaltyInput(sug)}
+                  >
+                    <Text style={styles.suggestionText}>{sug}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+
+            {/* Save Button */}
+            <TouchableOpacity
+              style={[styles.saveStakesBtn, savingStakes && { opacity: 0.6 }]}
+              onPress={handleSaveStakes}
+              disabled={savingStakes}
+            >
+              {savingStakes ? (
+                <ActivityIndicator size="small" color="#FFF" />
+              ) : (
+                <>
+                  <Ionicons name="checkmark-circle" size={18} color="#FFF" />
+                  <Text style={styles.saveStakesBtnText}>Save Bounty & Penalty</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   );
 }
@@ -591,4 +815,136 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   tableLeaveText: { fontSize: 8, fontWeight: '700', color: '#475569' },
+  // Weekly Bounty & Penalty Styles
+  stakesCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: RADIUS.sm,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#ECECEC',
+    marginBottom: 16,
+  },
+  stakesHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  stakesHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 },
+  stakesIconBadge: {
+    width: 26,
+    height: 26,
+    borderRadius: 6,
+    backgroundColor: '#FEF3C7',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stakesSectionTitle: { fontSize: 13, fontWeight: '700', color: '#1A1A24' },
+  stakesSectionSub: { fontSize: 9, color: '#7E7E8F', marginTop: 1 },
+  stakesEditBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#E8F5E9',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: RADIUS.full,
+    gap: 3,
+  },
+  stakesEditBtnText: { fontSize: 9, fontWeight: '700', color: COLORS.primary },
+  bountyBox: {
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+    borderRadius: RADIUS.sm,
+    padding: 9,
+    marginBottom: 8,
+  },
+  penaltyBox: {
+    backgroundColor: '#FFF1F2',
+    borderWidth: 1,
+    borderColor: '#FECDD3',
+    borderRadius: RADIUS.sm,
+    padding: 9,
+    marginBottom: 4,
+  },
+  stakesBadgeHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  bountyTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    gap: 3,
+  },
+  bountyTagText: { fontSize: 8, fontWeight: '800', color: '#15803D', letterSpacing: 0.3 },
+  penaltyTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEE2E2',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    gap: 3,
+  },
+  penaltyTagText: { fontSize: 8, fontWeight: '800', color: '#DC2626', letterSpacing: 0.3 },
+  stakesTargetLabel: { fontSize: 8, color: '#64748B', fontWeight: '600' },
+  stakesText: { fontSize: 11, fontWeight: '600', color: '#1E293B', lineHeight: 16 },
+  stakesFooterNote: { fontSize: 8, color: '#94A3B8', marginTop: 4, fontStyle: 'italic', textAlign: 'center' },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  modalCard: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    padding: 16,
+    maxHeight: '90%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  modalTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  modalTitle: { fontSize: 15, fontWeight: '800', color: '#1A1A24' },
+  modalSub: { fontSize: 10, color: '#7E7E8F', marginBottom: 12, lineHeight: 14 },
+  modalInputGroup: { marginBottom: 12 },
+  inputLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 },
+  inputLabel: { fontSize: 10, fontWeight: '700', color: '#1E293B' },
+  modalTextInput: {
+    backgroundColor: '#F8F9FA',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 6,
+    padding: 8,
+    fontSize: 11,
+    color: '#1A1A24',
+    minHeight: 46,
+    textAlignVertical: 'top',
+  },
+  suggestionRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 4 },
+  suggestionPill: {
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: RADIUS.full,
+  },
+  suggestionText: { fontSize: 9, color: '#475569', fontWeight: '600' },
+  saveStakesBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.primary,
+    borderRadius: RADIUS.sm,
+    paddingVertical: 11,
+    marginTop: 4,
+    marginBottom: 16,
+    gap: 6,
+  },
+  saveStakesBtnText: { color: '#FFF', fontSize: 12, fontWeight: '700' },
 });

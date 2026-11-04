@@ -18,6 +18,7 @@ import { supabase } from '../../lib/supabase';
 import { useAuthStore } from '../../store/useAuthStore';
 import { COLORS, FONTS, SPACING, RADIUS } from '../../constants/theme';
 import { submitLeaveRequest } from '../../lib/leaveWorkflow';
+import { isLogApproved } from '../../lib/taskWorkflow';
 
 const BADGES_LIST = [
   { id: '1', icon: 'restaurant-outline' as const, name: 'First Cook', earned: true },
@@ -35,6 +36,7 @@ export default function ProfileScreen() {
 
   // Leave Request Modal State
   const [leaveModalVisible, setLeaveModalVisible] = useState(false);
+  const [groceryModalVisible, setGroceryModalVisible] = useState(false);
   const [leaveDuration, setLeaveDuration] = useState('');
   const [leaveStartDate, setLeaveStartDate] = useState('');
   const [leaveEndDate, setLeaveEndDate] = useState('');
@@ -46,11 +48,12 @@ export default function ProfileScreen() {
   const loadStats = async () => {
     if (!profile?.id) return;
     try {
-      const { count } = await supabase
+      const { data } = await supabase
         .from('task_logs')
-        .select('*', { count: 'exact', head: true })
+        .select('notes')
         .eq('user_id', profile.id);
-      setCompletedCount(count ?? 0);
+      const approvedCount = data?.filter((l) => isLogApproved(l.notes)).length ?? 0;
+      setCompletedCount(approvedCount);
     } catch (_) {}
   };
 
@@ -201,25 +204,89 @@ export default function ProfileScreen() {
         ))}
       </View>
 
-      {/* Apply for Leave Button */}
-      <TouchableOpacity style={styles.leaveBtn} onPress={() => setLeaveModalVisible(true)}>
-        <Ionicons name="airplane-outline" size={18} color="#FFF" />
-        <Text style={styles.leaveBtnText}>Apply for Leave</Text>
-      </TouchableOpacity>
+      {/* ─── Quick Actions Heading & Square Container ─── */}
+      <View style={styles.sectionHeaderRow}>
+        <Ionicons name="flash-outline" size={18} color={COLORS.text} />
+        <Text style={styles.sectionTitle}>Quick Actions</Text>
+      </View>
 
-      {/* Admin Panel Button */}
-      {profile?.is_admin && (
-        <TouchableOpacity style={styles.adminBtn} onPress={() => router.push('/house/admin')}>
-          <Ionicons name="settings-outline" size={18} color="#FFF" />
-          <Text style={styles.adminBtnText}>Admin Settings</Text>
+      <View style={styles.quickActionsContainer}>
+        {/* Admin Options Button */}
+        {profile?.is_admin ? (
+          <TouchableOpacity
+            style={styles.actionSquareBtn}
+            onPress={() => router.push('/house/admin')}
+            activeOpacity={0.7}
+          >
+            <View style={[styles.actionIconCircle, { backgroundColor: '#F3E8FF' }]}>
+              <Ionicons name="settings" size={20} color="#9333EA" />
+            </View>
+            <View style={[styles.actionTagBadge, { backgroundColor: '#9333EA' }]}>
+              <Text style={styles.actionTagText}>Admin</Text>
+            </View>
+            <Text style={styles.actionBtnLabel}>Admin Options</Text>
+            <Text style={styles.actionBtnSub}>House settings</Text>
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity
+            style={[styles.actionSquareBtn, { opacity: 0.65 }]}
+            onPress={() => {
+              const msg = 'Admin options are only accessible by the house admin (👑).';
+              if (Platform.OS === 'web') alert(msg);
+              else Alert.alert('Admin Access', msg);
+            }}
+            activeOpacity={0.7}
+          >
+            <View style={[styles.actionIconCircle, { backgroundColor: '#F1F5F9' }]}>
+              <Ionicons name="lock-closed" size={20} color="#64748B" />
+            </View>
+            <Text style={styles.actionBtnLabel}>Admin Options</Text>
+            <Text style={styles.actionBtnSub}>Admin only</Text>
+          </TouchableOpacity>
+        )}
+
+        {/* Leave Request Button */}
+        <TouchableOpacity
+          style={styles.actionSquareBtn}
+          onPress={() => setLeaveModalVisible(true)}
+          activeOpacity={0.7}
+        >
+          <View style={[styles.actionIconCircle, { backgroundColor: '#E0F2FE' }]}>
+            <Ionicons name="airplane" size={20} color="#0284C7" />
+          </View>
+          <Text style={styles.actionBtnLabel}>Leave Request</Text>
+          <Text style={styles.actionBtnSub}>Vacation pass</Text>
         </TouchableOpacity>
-      )}
 
-      {/* Sign Out */}
-      <TouchableOpacity style={styles.signOutBtn} onPress={handleSignOut}>
-        <Ionicons name="log-out-outline" size={18} color={COLORS.error} />
-        <Text style={styles.signOutText}>Sign Out</Text>
-      </TouchableOpacity>
+        {/* Grocery List (Dummy) Button */}
+        <TouchableOpacity
+          style={styles.actionSquareBtn}
+          onPress={() => setGroceryModalVisible(true)}
+          activeOpacity={0.7}
+        >
+          <View style={[styles.actionIconCircle, { backgroundColor: '#FEF3C7' }]}>
+            <Ionicons name="cart" size={20} color="#D97706" />
+          </View>
+          <View style={styles.actionTagBadge}>
+            <Text style={styles.actionTagText}>Dummy</Text>
+          </View>
+          <Text style={styles.actionBtnLabel}>Grocery List</Text>
+          <Text style={styles.actionBtnSub}>Shared items</Text>
+        </TouchableOpacity>
+
+        {/* Sign Out Button */}
+        <TouchableOpacity
+          style={styles.actionSquareBtn}
+          onPress={handleSignOut}
+          activeOpacity={0.7}
+        >
+          <View style={[styles.actionIconCircle, { backgroundColor: '#FEE2E2' }]}>
+            <Ionicons name="log-out" size={20} color="#EF4444" />
+          </View>
+          <Text style={[styles.actionBtnLabel, { color: '#EF4444' }]}>Sign Out</Text>
+          <Text style={styles.actionBtnSub}>Exit account</Text>
+        </TouchableOpacity>
+      </View>
 
       {/* ─── Modal: Apply for Leave ─── */}
       <Modal visible={leaveModalVisible} transparent animationType="slide">
@@ -326,6 +393,77 @@ export default function ProfileScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* ─── Modal: Grocery List (Dummy Preview) ─── */}
+      <Modal visible={groceryModalVisible} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <View style={styles.modalTitleRow}>
+                <View style={styles.groceryIconBadge}>
+                  <Ionicons name="cart" size={18} color="#D97706" />
+                </View>
+                <View>
+                  <Text style={styles.modalTitle}>Shared Grocery List</Text>
+                  <Text style={styles.grocerySubtitle}>Household shopping & supplies</Text>
+                </View>
+              </View>
+              <TouchableOpacity onPress={() => setGroceryModalVisible(false)}>
+                <Ionicons name="close" size={22} color={COLORS.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.modalSub}>
+              Keep track of groceries, pantry essentials, and shared cleaning supplies with your roommates.
+            </Text>
+
+            {/* Dummy grocery items */}
+            <View style={styles.groceryListPreview}>
+              {[
+                { name: 'Milk (Whole, 2L)', by: 'Added by Roommate', icon: '🥛', checked: true },
+                { name: 'Eggs (12 Pack)', by: 'Added by Roommate', icon: '🥚', checked: true },
+                { name: 'Dish Soap & Sponges', by: 'Added by You', icon: '🧽', checked: false },
+                { name: 'Trash Bags & Napkins', by: 'Added by You', icon: '🧻', checked: false },
+                { name: 'Coffee Beans', by: 'Added by Roommate', icon: '☕', checked: false },
+              ].map((item, idx) => (
+                <View key={idx} style={styles.groceryItemRow}>
+                  <Ionicons
+                    name={item.checked ? 'checkbox' : 'square-outline'}
+                    size={18}
+                    color={item.checked ? COLORS.primary : COLORS.textLight}
+                  />
+                  <Text style={styles.groceryItemEmoji}>{item.icon}</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text
+                      style={[
+                        styles.groceryItemName,
+                        item.checked && styles.groceryItemChecked,
+                      ]}
+                    >
+                      {item.name}
+                    </Text>
+                    <Text style={styles.groceryItemSub}>{item.by}</Text>
+                  </View>
+                </View>
+              ))}
+            </View>
+
+            <View style={styles.grocerySoonBox}>
+              <Ionicons name="sparkles" size={14} color="#D97706" />
+              <Text style={styles.grocerySoonText}>
+                Full collaborative sync & grocery expense splitting coming in the next update!
+              </Text>
+            </View>
+
+            <TouchableOpacity
+              style={styles.closeGroceryBtn}
+              onPress={() => setGroceryModalVisible(false)}
+            >
+              <Text style={styles.closeGroceryBtnText}>Got it</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   );
 }
@@ -403,44 +541,119 @@ const styles = StyleSheet.create({
   badgeNameLocked: { color: '#A0A0B0' },
   earnedDot: { width: 5, height: 5, borderRadius: 2.5, backgroundColor: COLORS.success },
   lockedText: { fontSize: 8, color: '#A0A0B0', fontWeight: '500' },
-  leaveBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#0284C7',
-    borderRadius: RADIUS.sm,
-    paddingVertical: 10,
-    marginBottom: 8,
-    gap: 6,
-    shadowColor: '#0284C7',
-    shadowOpacity: 0.15,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  leaveBtnText: { color: '#FFF', fontSize: 12, fontWeight: '700' },
-  adminBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#37474F',
-    borderRadius: RADIUS.sm,
-    paddingVertical: 10,
-    marginBottom: 8,
-    gap: 6,
-  },
-  adminBtnText: { color: '#FFF', fontSize: 12, fontWeight: '700' },
-  signOutBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
+  // Quick Actions Container & Square Small Buttons
+  quickActionsContainer: {
     backgroundColor: '#FFFFFF',
     borderRadius: RADIUS.sm,
-    paddingVertical: 10,
+    padding: 10,
     borderWidth: 1,
-    borderColor: '#FFCDD2',
-    gap: 4,
+    borderColor: '#ECECEC',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    gap: 8,
+    marginBottom: 16,
   },
-  signOutText: { color: COLORS.error, fontSize: 12, fontWeight: '700' },
+  actionSquareBtn: {
+    width: '48%',
+    backgroundColor: '#F8F9FA',
+    borderWidth: 1,
+    borderColor: '#ECECEC',
+    borderRadius: RADIUS.sm,
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  actionIconCircle: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 6,
+  },
+  actionBtnLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#1A1A24',
+    textAlign: 'center',
+  },
+  actionBtnSub: {
+    fontSize: 8,
+    color: '#7E7E8F',
+    marginTop: 1,
+    textAlign: 'center',
+  },
+  actionTagBadge: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    backgroundColor: '#D97706',
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderRadius: 4,
+  },
+  actionTagText: {
+    fontSize: 7,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    textTransform: 'uppercase',
+  },
+
+  // Grocery List Dummy Preview Styles
+  groceryIconBadge: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: '#FEF3C7',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  grocerySubtitle: { fontSize: 9, color: '#7E7E8F', marginTop: 1 },
+  groceryListPreview: {
+    backgroundColor: '#F8F9FA',
+    borderRadius: 8,
+    padding: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginBottom: 10,
+    gap: 6,
+  },
+  groceryItemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 4,
+    paddingHorizontal: 4,
+    gap: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  groceryItemEmoji: { fontSize: 16 },
+  groceryItemName: { fontSize: 11, fontWeight: '600', color: '#1E293B' },
+  groceryItemChecked: { textDecorationLine: 'line-through', color: '#94A3B8' },
+  groceryItemSub: { fontSize: 8, color: '#94A3B8' },
+  grocerySoonBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFBEB',
+    padding: 8,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    gap: 6,
+    marginBottom: 12,
+  },
+  grocerySoonText: { fontSize: 9, color: '#92400E', flex: 1, lineHeight: 13, fontWeight: '500' },
+  closeGroceryBtn: {
+    backgroundColor: COLORS.primary,
+    borderRadius: RADIUS.sm,
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  closeGroceryBtnText: { color: '#FFF', fontSize: 12, fontWeight: '700' },
 
   // Modal styles
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', padding: 14 },

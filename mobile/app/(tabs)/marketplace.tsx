@@ -60,10 +60,15 @@ export default function MarketplaceScreen() {
 
       // Load admin task templates (backend API with direct Supabase fallback)
       let regularTemplates: TaskTemplate[] = [];
+      const isRegularChore = (category: string) =>
+        category !== 'Marketplace' &&
+        category !== 'Leave' &&
+        category !== 'WeeklyStakes';
+
       try {
         const templatesRes = await fetchTasks(profile.house_id);
-        regularTemplates = (templatesRes.data?.tasks || []).filter(
-          (t: TaskTemplate) => t.category !== 'Marketplace'
+        regularTemplates = (templatesRes.data?.tasks || []).filter((t: TaskTemplate) =>
+          isRegularChore(t.category)
         );
       } catch {
         const { data } = await supabase
@@ -71,8 +76,11 @@ export default function MarketplaceScreen() {
           .select('*')
           .eq('house_id', profile.house_id)
           .eq('is_active', true)
+          .neq('category', 'Marketplace')
+          .neq('category', 'Leave')
+          .neq('category', 'WeeklyStakes')
           .order('category');
-        regularTemplates = (data || []).filter((t: any) => t.category !== 'Marketplace');
+        regularTemplates = (data || []).filter((t: any) => isRegularChore(t.category));
       }
       setAdminTemplates(regularTemplates);
     } catch (_) {}

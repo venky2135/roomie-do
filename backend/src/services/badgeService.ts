@@ -34,11 +34,26 @@ export const checkAndAwardBadges = async (
     .eq('id', userId)
     .single();
 
-  // Fetch total task logs for user
-  const { count: taskCount } = await supabase
+  const isApprovedLog = (notes: string | null | undefined): boolean => {
+    if (!notes) return true;
+    try {
+      const parsed = JSON.parse(notes);
+      if (typeof parsed === 'object' && parsed !== null) {
+        if (parsed.type === 'leave_request') return parsed.status === 'approved';
+        if (parsed.status === 'pending_verification') return false;
+        if (parsed.status === 'completed') return true;
+      }
+    } catch {}
+    return true;
+  };
+
+  // Fetch total approved task logs for user
+  const { data: userLogs } = await supabase
     .from('task_logs')
-    .select('*', { count: 'exact', head: true })
+    .select('notes')
     .eq('user_id', userId);
+
+  const taskCount = userLogs?.filter((l) => isApprovedLog(l.notes)).length ?? 0;
 
   for (const badge of unearnedBadges) {
     let earned = false;

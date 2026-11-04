@@ -35,23 +35,38 @@ router.get('/:houseId', authMiddleware, async (req: AuthRequest, res: Response):
     .eq('house_id', houseId);
   const memberIds = members?.map((m) => m.id) ?? [];
 
-  // Weekly category breakdown
+  const isApprovedLog = (notes: string | null | undefined): boolean => {
+    if (!notes) return true;
+    try {
+      const parsed = JSON.parse(notes);
+      if (typeof parsed === 'object' && parsed !== null) {
+        if (parsed.type === 'leave_request') return parsed.status === 'approved';
+        if (parsed.status === 'pending_verification') return false;
+        if (parsed.status === 'completed') return true;
+      }
+    } catch {}
+    return true;
+  };
+
+  // Weekly category breakdown (approved logs only)
   const { data: weeklyLogs } = await supabase
     .from('task_logs')
-    .select('credits_awarded, task_id, task_templates(category, name)')
+    .select('credits_awarded, task_id, notes, task_templates(category, name)')
     .in('user_id', memberIds)
     .gte('completed_at', weekAgo.toISOString());
 
   const categoryMap: Record<string, number> = {};
   weeklyLogs?.forEach((log: any) => {
-    const cat = log.task_templates?.category ?? 'Other';
-    categoryMap[cat] = (categoryMap[cat] ?? 0) + log.credits_awarded;
+    if (isApprovedLog(log.notes)) {
+      const cat = log.task_templates?.category ?? 'Other';
+      categoryMap[cat] = (categoryMap[cat] ?? 0) + (log.credits_awarded ?? 0);
+    }
   });
 
-  // Personal stats for requesting user
+  // Personal stats for requesting user (approved logs only)
   const { data: myLogs } = await supabase
     .from('task_logs')
-    .select('credits_awarded, completed_at, task_templates(name, icon)')
+    .select('credits_awarded, completed_at, notes, task_templates(name, icon)')
     .eq('user_id', userId)
     .gte('completed_at', monthAgo.toISOString())
     .order('completed_at', { ascending: true });
@@ -64,9 +79,11 @@ router.get('/:houseId', authMiddleware, async (req: AuthRequest, res: Response):
     dailyMap[d.toISOString().split('T')[0]] = 0;
   }
   myLogs?.forEach((log: any) => {
-    const day = log.completed_at.split('T')[0];
-    if (dailyMap[day] !== undefined) {
-      dailyMap[day] += log.credits_awarded;
+    if (isApprovedLog(log.notes)) {
+      const day = log.completed_at.split('T')[0];
+      if (dailyMap[day] !== undefined) {
+        dailyMap[day] += log.credits_awarded ?? 0;
+      }
     }
   });
 

@@ -88,15 +88,21 @@ android {
     compileSdk rootProject.ext.compileSdkVersion
 
     namespace 'com.roomiedo.app'
-    defaultConfig {
-        applicationId 'com.roomiedo.app'
-        minSdkVersion rootProject.ext.minSdkVersion
-        targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0.0"
+   defaultConfig {
+    applicationId 'com.roomiedo.app'
+    minSdkVersion rootProject.ext.minSdkVersion
+    targetSdkVersion rootProject.ext.targetSdkVersion
+    versionCode 1
+    versionName "1.0.0"
 
-        buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
+    buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
+
+    externalNativeBuild {
+        cmake {
+            arguments "-DCMAKE_OBJECT_PATH_MAX=200"
+        }
     }
+}
     signingConfigs {
         debug {
             storeFile file('debug.keystore')

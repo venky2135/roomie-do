@@ -3,7 +3,6 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
 const authMiddleware_1 = require("../middleware/authMiddleware");
 const supabaseClient_1 = require("../supabaseClient");
-const creditService_1 = require("../services/creditService");
 const badgeService_1 = require("../services/badgeService");
 const router = (0, express_1.Router)();
 // POST /api/tasks/log — Log a completed task
@@ -34,17 +33,26 @@ router.post('/log', authMiddleware_1.authMiddleware, async (req, res) => {
         res.status(403).json({ error: 'Task does not belong to your house' });
         return;
     }
-    // Calculate credits
-    const creditResult = await (0, creditService_1.calculateCredits)(userId, task.base_credits, !!photoUrl, !!isHighPriority);
-    // Insert task log
+    // Calculate potential credits (awarded only upon roommate approval)
+    let creditsAwarded = task.base_credits;
+    if (photoUrl)
+        creditsAwarded += 5;
+    if (isHighPriority)
+        creditsAwarded += 15;
+    const logMetadata = {
+        note: (notes ?? '').trim(),
+        status: 'pending_verification',
+        feedbacks: [],
+    };
+    // Insert task log with pending_verification state
     const { data: log, error: logError } = await supabaseClient_1.supabase
         .from('task_logs')
         .insert({
         user_id: userId,
         task_id: taskId,
-        credits_awarded: creditResult.creditsAwarded,
+        credits_awarded: creditsAwarded,
         photo_url: photoUrl ?? null,
-        notes: notes ?? null,
+        notes: JSON.stringify(logMetadata),
         completed_at: new Date().toISOString(),
     })
         .select()
@@ -53,12 +61,81 @@ router.post('/log', authMiddleware_1.authMiddleware, async (req, res) => {
         res.status(500).json({ error: 'Failed to log task', details: logError.message });
         return;
     }
-    // Check and award badges
-    const newBadges = await (0, badgeService_1.checkAndAwardBadges)(userId, task.house_id);
     res.json({
         success: true,
         log,
-        credits: creditResult,
+        message: 'Chore logged and pending roommate approval',
+    });
+});
+// POST /api/tasks/verify/:logId — Approve a task log and award XP
+router.post('/verify/:logId', authMiddleware_1.authMiddleware, async (req, res) => {
+    const userId = req.userId;
+    const { logId } = req.params;
+    const { data: log, error: logError } = await supabaseClient_1.supabase
+        .from('task_logs')
+        .select('*, profiles(id, xp, total_credits, streak_days)')
+        .eq('id', logId)
+        .single();
+    if (logError || !log) {
+        res.status(404).json({ error: 'Task log not found' });
+        return;
+    }
+    if (log.user_id === userId) {
+        res.status(400).json({ error: 'You cannot approve your own chore' });
+        return;
+    }
+    const { data: approver } = await supabaseClient_1.supabase
+        .from('profiles')
+        .select('house_id, username')
+        .eq('id', userId)
+        .single();
+    const { data: creator } = await supabaseClient_1.supabase
+        .from('profiles')
+        .select('house_id, xp, total_credits')
+        .eq('id', log.user_id)
+        .single();
+    if (!approver || !creator || approver.house_id !== creator.house_id) {
+        res.status(403).json({ error: 'Not a member of the same house' });
+        return;
+    }
+    let meta = {};
+    try {
+        meta = JSON.parse(log.notes);
+    }
+    catch {
+        meta = { note: log.notes || '' };
+    }
+    if (meta.status === 'completed') {
+        res.status(400).json({ error: 'Task is already approved' });
+        return;
+    }
+    meta.status = 'completed';
+    meta.verifiedBy = userId;
+    meta.verifiedByName = approver.username;
+    meta.verifiedAt = new Date().toISOString();
+    await supabaseClient_1.supabase
+        .from('task_logs')
+        .update({ notes: JSON.stringify(meta) })
+        .eq('id', logId);
+    // Award XP and total credits to task creator
+    const award = log.credits_awarded || 20;
+    const newXp = (creator.xp || 0) + award;
+    const newTotal = (creator.total_credits || 0) + award;
+    const newLevel = Math.floor(newXp / 500) + 1;
+    await supabaseClient_1.supabase
+        .from('profiles')
+        .update({
+        xp: newXp,
+        total_credits: newTotal,
+        level: newLevel,
+        last_active_at: new Date().toISOString(),
+    })
+        .eq('id', log.user_id);
+    // Check badges for creator
+    const newBadges = await (0, badgeService_1.checkAndAwardBadges)(log.user_id, creator.house_id);
+    res.json({
+        success: true,
+        awardedCredits: award,
         newBadges,
     });
 });
@@ -70,6 +147,9 @@ router.get('/:houseId', authMiddleware_1.authMiddleware, async (req, res) => {
         .select('*')
         .eq('house_id', houseId)
         .eq('is_active', true)
+        .neq('category', 'Marketplace')
+        .neq('category', 'Leave')
+        .neq('category', 'WeeklyStakes')
         .order('category');
     if (error) {
         res.status(500).json({ error: error.message });

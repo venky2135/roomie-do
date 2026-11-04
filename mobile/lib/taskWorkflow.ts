@@ -59,6 +59,32 @@ export function encodeLogNotes(meta: TaskLogMetadata): string {
 }
 
 /**
+ * Returns true only if a task log has been approved by a housemate or is a verified legacy log.
+ * Logs with status 'pending_verification' or unapproved leave requests return false.
+ */
+export function isLogApproved(notesRaw: string | null | undefined): boolean {
+  if (!notesRaw) return true; // legacy logs without metadata are treated as completed
+  try {
+    const parsed = JSON.parse(notesRaw);
+    if (typeof parsed === 'object' && parsed !== null) {
+      if (parsed.type === 'leave_request') {
+        return parsed.status === 'approved';
+      }
+      if (parsed.status === 'pending_verification') {
+        return false;
+      }
+      if (parsed.status === 'completed') {
+        return true;
+      }
+    }
+  } catch {
+    // Plain string note from before
+    return true;
+  }
+  return true;
+}
+
+/**
  * Toggle an emoji reaction for a user on a task log.
  */
 export async function toggleTaskLogReaction(
@@ -159,11 +185,15 @@ export async function verifyTaskLog(
     const creator = log.profiles;
     if (creator) {
       const award = log.credits_awarded || 20;
+      const newXp = (creator.xp || 0) + award;
+      const newCredits = (creator.total_credits || 0) + award;
+      const newLevel = Math.floor(newXp / 500) + 1;
       await supabaseAdmin
         .from('profiles')
         .update({
-          xp: (creator.xp || 0) + award,
-          total_credits: (creator.total_credits || 0) + award,
+          xp: newXp,
+          total_credits: newCredits,
+          level: newLevel,
           last_active_at: new Date().toISOString(),
         })
         .eq('id', creator.id);

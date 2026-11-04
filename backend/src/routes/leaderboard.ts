@@ -33,19 +33,40 @@ router.get('/:houseId', authMiddleware, async (req: AuthRequest, res: Response):
   }
 
   if (period === 'all') {
-    // All-time: use total_credits from profile
-    const sorted = [...members].sort((a, b) => b.total_credits - a.total_credits);
+    // All-time: use total_credits / xp from profile
+    const sorted = [...members].sort((a, b) => (b.xp ?? b.total_credits ?? 0) - (a.xp ?? a.total_credits ?? 0));
     res.json({
-      leaderboard: sorted.map((m, i) => ({ ...m, rank: i + 1, periodCredits: m.total_credits })),
+      leaderboard: sorted.map((m, i) => ({ ...m, rank: i + 1, periodCredits: m.xp ?? m.total_credits ?? 0 })),
     });
     return;
   }
 
-  // Period-based: sum credits from task_logs
+  const isApprovedLog = (notes: string | null | undefined): boolean => {
+    if (!notes) return true; // legacy logs without metadata are treated as completed
+    try {
+      const parsed = JSON.parse(notes);
+      if (typeof parsed === 'object' && parsed !== null) {
+        if (parsed.type === 'leave_request') {
+          return parsed.status === 'approved';
+        }
+        if (parsed.status === 'pending_verification') {
+          return false;
+        }
+        if (parsed.status === 'completed') {
+          return true;
+        }
+      }
+    } catch {
+      return true;
+    }
+    return true;
+  };
+
+  // Period-based: sum credits from approved task_logs only
   const memberIds = members.map((m) => m.id);
   const query = supabase
     .from('task_logs')
-    .select('user_id, credits_awarded')
+    .select('user_id, credits_awarded, notes')
     .in('user_id', memberIds);
 
   if (dateFilter) query.gte('completed_at', dateFilter);
@@ -54,7 +75,9 @@ router.get('/:houseId', authMiddleware, async (req: AuthRequest, res: Response):
   const creditMap: Record<string, number> = {};
   members.forEach((m) => (creditMap[m.id] = 0));
   logs?.forEach((l) => {
-    creditMap[l.user_id] = (creditMap[l.user_id] ?? 0) + l.credits_awarded;
+    if (isApprovedLog(l.notes)) {
+      creditMap[l.user_id] = (creditMap[l.user_id] ?? 0) + (l.credits_awarded ?? 0);
+    }
   });
 
   const leaderboard = members

@@ -31,15 +31,30 @@ export const calculateFairnessScore = async (
   const memberIds = members.map((m) => m.id);
   const { data: logs } = await supabase
     .from('task_logs')
-    .select('user_id, credits_awarded')
+    .select('user_id, credits_awarded, notes')
     .in('user_id', memberIds)
     .gte('completed_at', weekAgo.toISOString());
 
-  // Sum credits per member
+  const isApprovedLog = (notes: string | null | undefined): boolean => {
+    if (!notes) return true;
+    try {
+      const parsed = JSON.parse(notes);
+      if (typeof parsed === 'object' && parsed !== null) {
+        if (parsed.type === 'leave_request') return parsed.status === 'approved';
+        if (parsed.status === 'pending_verification') return false;
+        if (parsed.status === 'completed') return true;
+      }
+    } catch {}
+    return true;
+  };
+
+  // Sum credits per member for approved logs only
   const creditMap: Record<string, number> = {};
   members.forEach((m) => (creditMap[m.id] = 0));
   logs?.forEach((l) => {
-    creditMap[l.user_id] = (creditMap[l.user_id] ?? 0) + l.credits_awarded;
+    if (isApprovedLog(l.notes)) {
+      creditMap[l.user_id] = (creditMap[l.user_id] ?? 0) + (l.credits_awarded ?? 0);
+    }
   });
 
   const totalCredits = Object.values(creditMap).reduce((a, b) => a + b, 0);
