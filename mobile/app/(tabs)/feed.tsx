@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+﻿import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -12,7 +12,9 @@ import {
   Alert,
   Platform,
   KeyboardAvoidingView,
+  Keyboard,
 } from 'react-native';
+import { useKeyboard } from '../../lib/useKeyboard';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { supabase, supabaseAdmin } from '../../lib/supabase';
 import { useAuthStore } from '../../store/useAuthStore';
@@ -32,6 +34,12 @@ import {
   approveLeaveRequest,
   deleteLeaveRequest,
 } from '../../lib/leaveWorkflow';
+import {
+  parseComplaintMetadata,
+  upvoteComplaint,
+  withdrawComplaint,
+  ComplaintMetadata,
+} from '../../lib/complaintWorkflow';
 
 const REACTION_EMOJIS = ['🙌', '🔥', '👏', '❤️', '⚡'];
 
@@ -48,6 +56,7 @@ interface FeedItem {
 
 export default function FeedScreen() {
   const { profile, refreshProfile } = useAuthStore();
+  const { keyboardHeight } = useKeyboard();
   const [feed, setFeed] = useState<FeedItem[]>([]);
   const [membersCount, setMembersCount] = useState(1);
   const [refreshing, setRefreshing] = useState(false);
@@ -254,6 +263,128 @@ export default function FeedScreen() {
     }
   };
 
+  const handleUpvoteComplaint = async (logId: string) => {
+    if (!profile?.id || !profile?.house_id) return;
+
+    const item = feed.find((f) => f.id === logId);
+    const meta = parseComplaintMetadata(item?.notes);
+    if (!meta) return;
+
+    if (meta.accusedId === profile.id) {
+      const msg = 'You cannot vote on a complaint filed against yourself.';
+      if (Platform.OS === 'web') alert(msg);
+      else Alert.alert('Notice', msg);
+      return;
+    }
+
+    if (meta.reporterId === profile.id) {
+      const msg = 'You cannot upvote a complaint you filed.';
+      if (Platform.OS === 'web') alert(msg);
+      else Alert.alert('Notice', msg);
+      return;
+    }
+
+    if (meta.upvotes.includes(profile.id)) {
+      const msg = 'You have already upvoted this complaint.';
+      if (Platform.OS === 'web') alert(msg);
+      else Alert.alert('Notice', msg);
+      return;
+    }
+
+    const doUpvote = async () => {
+      // Optimistic update
+      setFeed((prev) =>
+        prev.map((f) => {
+          if (f.id === logId) {
+            const currentMeta = parseComplaintMetadata(f.notes);
+            if (!currentMeta) return f;
+            const updatedUpvotes = [...currentMeta.upvotes, profile.id];
+            const isUpheld = updatedUpvotes.length >= currentMeta.requiredUpvotes;
+            const updatedMeta: ComplaintMetadata = {
+              ...currentMeta,
+              upvotes: updatedUpvotes,
+              status: isUpheld ? 'upheld' : 'pending',
+              upheldAt: isUpheld ? new Date().toISOString() : undefined,
+            };
+            return { ...f, notes: JSON.stringify(updatedMeta) };
+          }
+          return f;
+        })
+      );
+
+      const res = await upvoteComplaint({
+        logId,
+        voterUserId: profile.id,
+        voterUsername: profile.username,
+        houseId: profile.house_id!,
+      });
+
+      if (res.success) {
+        if (res.isUpheld) {
+          const msg = `Complaint upheld! ${meta.accusedUsername} has received a -10 streaks penalty.`;
+          if (Platform.OS === 'web') alert(msg);
+          else Alert.alert('Complaint Upheld! ⚠️', msg);
+        } else {
+          const msg = 'You upvoted this complaint. Waiting for remaining roommates.';
+          if (Platform.OS === 'web') alert(msg);
+          else Alert.alert('Upvoted 👍', msg);
+        }
+        await loadFeed();
+        refreshProfile();
+      } else {
+        const err = res.error || 'Failed to upvote complaint';
+        if (Platform.OS === 'web') alert(err);
+        else Alert.alert('Notice', err);
+        await loadFeed();
+      }
+    };
+
+    if (Platform.OS === 'web') {
+      const confirmed =
+        typeof window !== 'undefined'
+          ? window.confirm(
+              `Upvote this complaint? If required upvotes are reached, ${meta.accusedUsername} will lose 10 streaks.`
+            )
+          : true;
+      if (confirmed) await doUpvote();
+    } else {
+      Alert.alert(
+        'Upvote Complaint',
+        `Upvote this complaint? If corroborated by roommates, ${meta.accusedUsername} will receive a -10 streaks penalty.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Upvote 👍', onPress: doUpvote },
+        ]
+      );
+    }
+  };
+
+  const handleWithdrawComplaint = async (logId: string) => {
+    if (!profile?.id) return;
+
+    const doWithdraw = async () => {
+      setFeed((prev) => prev.filter((item) => item.id !== logId));
+      const res = await withdrawComplaint(logId, profile.id);
+      if (!res.success) {
+        const err = res.error || 'Failed to withdraw complaint';
+        if (Platform.OS === 'web') alert(err);
+        else Alert.alert('Error', err);
+        await loadFeed();
+      }
+    };
+
+    if (Platform.OS === 'web') {
+      if (typeof window !== 'undefined' && window.confirm('Withdraw and delete this complaint?')) {
+        await doWithdraw();
+      }
+    } else {
+      Alert.alert('Withdraw Complaint', 'Are you sure you want to withdraw this complaint?', [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Withdraw', style: 'destructive', onPress: doWithdraw },
+      ]);
+    }
+  };
+
   const handleSendFeedback = async () => {
     if (!feedbackLogId || !feedbackText.trim()) return;
     const textToSend = feedbackText.trim();
@@ -367,7 +498,180 @@ export default function FeedScreen() {
           </View>
         }
         renderItem={({ item }) => {
-          // Check if item is a Leave Request
+          // Check if item is an Anonymous Complaint
+          const complaintMeta = parseComplaintMetadata(item.notes);
+
+          if (complaintMeta) {
+            const isAccused = complaintMeta.accusedId === profile?.id;
+            const isReporter = complaintMeta.reporterId === profile?.id;
+            const isUpheld = complaintMeta.status === 'upheld';
+            const upvoteCount = complaintMeta.upvotes.length;
+            const requiredUpvotes = complaintMeta.requiredUpvotes || 1;
+            const hasUpvoted = profile?.id ? complaintMeta.upvotes.includes(profile.id) : false;
+            const progressPct = Math.min(100, Math.round((upvoteCount / requiredUpvotes) * 100));
+
+            return (
+              <View style={[styles.complaintCard, isUpheld && styles.complaintCardUpheld]}>
+                {/* 1. Header Row */}
+                <View style={styles.complaintHeader}>
+                  <View style={styles.complaintAvatarCircle}>
+                    <Text style={styles.complaintAvatarText}>🤫</Text>
+                  </View>
+                  <View style={styles.complaintHeaderInfo}>
+                    <View style={styles.complaintHeaderTitleRow}>
+                      <Text style={styles.complaintUsername}>Anonymous Report</Text>
+                      {/* <View style={styles.complaintAnonPill}>
+                        <Text style={styles.complaintAnonPillText}>ANON REPORT</Text>
+                      </View> */}
+                    </View>
+                    <Text style={styles.complaintTimeAndCat}>
+                      {complaintMeta.category} • {timeAgo(item.completed_at)}
+                    </Text>
+                  </View>
+
+                  {/* Penalty Badge */}
+                  <View style={[styles.complaintPenaltyBadge, isUpheld && styles.complaintPenaltyBadgeUpheld]}>
+                    <Ionicons name="flame" size={11} color={isUpheld ? '#DC2626' : '#E11D48'} />
+                    <Text style={[styles.complaintPenaltyText, isUpheld && { color: '#DC2626' }]}>
+                      {isUpheld ? '-10 Streaks' : '-10 Streak Risk'}
+                    </Text>
+                  </View>
+                </View>
+
+                {/* 2. Accused Roommate Banner */}
+                <View style={styles.complaintAccusedBanner}>
+                  <View style={styles.complaintAccusedLeft}>
+                    <Ionicons name="shield-outline" size={13} color="#E11D48" />
+                    <Text style={styles.complaintAccusedLabel}>Reported against</Text>
+                  </View>
+                  <View style={styles.complaintAccusedPill}>
+                    <Text style={styles.complaintAccusedAvatar}>{complaintMeta.accusedAvatar || '🧑'}</Text>
+                    <Text style={styles.complaintAccusedName}>{complaintMeta.accusedUsername}</Text>
+                    {isAccused && <Text style={styles.complaintAccusedYou}> (You)</Text>}
+                  </View>
+                </View>
+
+                {/* 3. Complaint Message */}
+                <View style={styles.complaintContentBox}>
+                  <Text style={styles.complaintTitle}>"{complaintMeta.title}"</Text>
+                  {complaintMeta.details ? (
+                    <Text style={styles.complaintDetails}>{complaintMeta.details}</Text>
+                  ) : null}
+                </View>
+
+                {/* 4. Voting Progress or Upheld Status */}
+                {isUpheld ? (
+                  <View style={styles.complaintUpheldBanner}>
+                    <Ionicons name="checkmark-circle" size={14} color="#DC2626" />
+                    <Text style={styles.complaintUpheldBannerText}>
+                      Upheld by roommates. -10 streaks penalty applied to @{complaintMeta.accusedUsername}.
+                    </Text>
+                  </View>
+                ) : (
+                  <View style={styles.complaintProgressSection}>
+                    <View style={styles.complaintProgressHeader}>
+                      <Text style={styles.complaintProgressLabel}>
+                        <Ionicons name="thumbs-up-outline" size={11} color="#64748B" /> {upvoteCount} of {requiredUpvotes} votes to uphold
+                      </Text>
+                      <Text style={styles.complaintProgressPct}>{progressPct}%</Text>
+                    </View>
+                    <View style={styles.complaintProgressBarTrack}>
+                      <View style={[styles.complaintProgressBarFill, { width: `${progressPct}%` }]} />
+                    </View>
+                  </View>
+                )}
+
+                {/* 5. Feedback badges (if any) */}
+                {(() => {
+                  const compFeedbacks = (() => {
+                    try {
+                      const p = JSON.parse(item.notes || '');
+                      return Array.isArray(p.feedbacks) ? p.feedbacks : [];
+                    } catch {
+                      return [];
+                    }
+                  })();
+                  return compFeedbacks.length > 0 ? (
+                    <View style={styles.floatingFeedbackWrapper}>
+                      {compFeedbacks.map((fb: any) => (
+                        <View key={fb.id} style={styles.floatingFeedbackBadge}>
+                          <View style={styles.floatingTag}>
+                            <Ionicons name="eye-off" size={11} color="#FFF" />
+                          </View>
+                          <Text style={styles.floatingFeedbackQuote} numberOfLines={2}>
+                            "{fb.text}"
+                          </Text>
+                          <Text style={styles.floatingFeedbackTime}>{timeAgo(fb.createdAt)}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  ) : null;
+                })()}
+
+                {/* 6. Unified Clean Footer Action Row */}
+                <View style={styles.complaintFooterRow}>
+                  {/* Left: Role / Vote State */}
+                  <View style={styles.complaintFooterLeft}>
+                    {isUpheld ? (
+                      <View style={styles.complaintPillClosed}>
+                        <Ionicons name="lock-closed" size={10} color="#64748B" />
+                        <Text style={styles.complaintPillClosedText}>Resolved</Text>
+                      </View>
+                    ) : isAccused ? (
+                      <View style={styles.complaintPillAccused}>
+                        <Ionicons name="alert-circle-outline" size={11} color="#B45309" />
+                        <Text style={styles.complaintPillAccusedText}>You are accused</Text>
+                      </View>
+                    ) : isReporter ? (
+                      <View style={styles.complaintPillReporter}>
+                        <Ionicons name="eye-off-outline" size={11} color="#7E22CE" />
+                        <Text style={styles.complaintPillReporterText}>You filed this</Text>
+                      </View>
+                    ) : hasUpvoted ? (
+                      <View style={styles.complaintPillVoted}>
+                        <Ionicons name="checkmark" size={11} color="#059669" />
+                        <Text style={styles.complaintPillVotedText}>You Upvoted</Text>
+                      </View>
+                    ) : (
+                      <TouchableOpacity
+                        style={styles.complaintUpvoteBtn}
+                        onPress={() => handleUpvoteComplaint(item.id)}
+                        activeOpacity={0.8}
+                      >
+                        <Ionicons name="thumbs-up" size={12} color="#FFF" />
+                        <Text style={styles.complaintUpvoteBtnText}>Upvote Complaint</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+
+                  {/* Right: Secondary Actions */}
+                  <View style={styles.complaintFooterRight}>
+                    {isReporter && !isUpheld && (
+                      <TouchableOpacity
+                        style={styles.complaintWithdrawBtn}
+                        onPress={() => handleWithdrawComplaint(item.id)}
+                        activeOpacity={0.7}
+                      >
+                        <Ionicons name="trash-outline" size={11} color="#E11D48" />
+                        <Text style={styles.complaintWithdrawBtnText}>Withdraw</Text>
+                      </TouchableOpacity>
+                    )}
+
+                    <TouchableOpacity
+                      style={styles.complaintFeedbackBtn}
+                      onPress={() => setFeedbackLogId(item.id)}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons name="chatbubble-ellipses-outline" size={11} color="#64748B" />
+                      <Text style={styles.complaintFeedbackBtnText}>Feedback</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </View>
+            );
+          }
+
+                    // Check if item is a Leave Request
           const leaveMeta = parseLeaveMetadata(item.notes);
 
           if (leaveMeta) {
@@ -658,15 +962,32 @@ export default function FeedScreen() {
       />
 
       {/* Modal: Add Anonymous Feedback */}
-      <Modal visible={!!feedbackLogId} transparent animationType="fade" onRequestClose={() => setFeedbackLogId(null)}>
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalOverlay}>
+      <Modal
+        visible={!!feedbackLogId}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setFeedbackLogId(null)}
+        statusBarTranslucent
+      >
+        <KeyboardAvoidingView
+          style={styles.modalOverlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        >
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={() => { Keyboard.dismiss(); setFeedbackLogId(null); }}
+          />
           <View style={styles.modalCard}>
             <View style={styles.modalHeader}>
               <View style={styles.modalTitleRow}>
                 <Ionicons name="eye-off" size={16} color={COLORS.primary} />
                 <Text style={styles.modalTitle}>Leave Anonymous Feedback</Text>
               </View>
-              <TouchableOpacity onPress={() => setFeedbackLogId(null)}>
+              <TouchableOpacity
+                onPress={() => setFeedbackLogId(null)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
                 <Ionicons name="close" size={20} color={COLORS.textSecondary} />
               </TouchableOpacity>
             </View>
@@ -1043,5 +1364,331 @@ const styles = StyleSheet.create({
     fontSize: 9,
     fontWeight: '700',
     color: COLORS.error,
+  },
+
+  // Anonymous Complaint Specific Card Styles
+  complaintCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#FEE2E2',
+    borderLeftWidth: 4,
+    borderLeftColor: '#E11D48',
+    padding: 12,
+    marginHorizontal: 12,
+    marginBottom: 10,
+    shadowColor: '#E11D48',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  complaintCardUpheld: {
+    borderLeftColor: '#DC2626',
+    borderColor: '#FCA5A5',
+    backgroundColor: '#FFFDFD',
+  },
+  complaintHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  complaintAvatarCircle: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: '#FFF1F2',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#FFE4E6',
+  },
+  complaintAvatarText: {
+    fontSize: 18,
+  },
+  complaintHeaderInfo: {
+    flex: 1,
+    marginLeft: 8,
+  },
+  complaintHeaderTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    
+  },
+  complaintUsername: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#E11D48',
+  },
+  complaintAnonPill: {
+    backgroundColor: '#FFE4E6',
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 4,
+    marginLeft: 6,
+  },
+  complaintAnonPillText: {
+    fontSize: 7.5,
+    fontWeight: '800',
+    color: '#E11D48',
+    textTransform: 'uppercase',
+  },
+  complaintTimeAndCat: {
+    fontSize: 9.5,
+    color: '#64748B',
+    fontWeight: '500',
+    marginTop: 1,
+  },
+  complaintPenaltyBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: '#FFF1F2',
+    borderWidth: 1,
+    borderColor: '#FECDD3',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 10,
+  },
+  complaintPenaltyBadgeUpheld: {
+    backgroundColor: '#FEF2F2',
+    borderColor: '#FCA5A5',
+  },
+  complaintPenaltyText: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#E11D48',
+  },
+  complaintAccusedBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    marginTop: 8,
+    marginBottom: 6,
+  },
+  complaintAccusedLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  complaintAccusedLabel: {
+    fontSize: 10.5,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  complaintAccusedPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 10,
+  },
+  complaintAccusedAvatar: {
+    fontSize: 12,
+  },
+  complaintAccusedName: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  complaintAccusedYou: {
+    fontSize: 9.5,
+    fontWeight: '700',
+    color: '#E11D48',
+  },
+  complaintContentBox: {
+    marginVertical: 4,
+  },
+  complaintTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1E293B',
+    lineHeight: 18,
+    
+  },
+  complaintDetails: {
+    fontSize: 11,
+    color: '#64748B',
+    lineHeight: 15,
+    marginTop: 3,
+    fontStyle: 'italic',
+  },
+  complaintProgressSection: {
+    marginTop: 6,
+    marginBottom: 6,
+  },
+  complaintProgressHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 3,
+  },
+  complaintProgressLabel: {
+    fontSize: 9.5,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  complaintProgressPct: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#E11D48',
+  },
+  complaintProgressBarTrack: {
+    height: 4,
+    backgroundColor: '#F1F5F9',
+    borderRadius: 2,
+    overflow: 'hidden',
+  },
+  complaintProgressBarFill: {
+    height: '100%',
+    backgroundColor: '#E11D48',
+    borderRadius: 2,
+  },
+  complaintUpheldBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECDD3',
+    borderRadius: 6,
+    padding: 6,
+    marginVertical: 6,
+  },
+  complaintUpheldBannerText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#991B1B',
+    flex: 1,
+  },
+  complaintFooterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+    paddingTop: 8,
+    marginTop: 4,
+  },
+  complaintFooterLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  complaintFooterRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  complaintUpvoteBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#E11D48',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+  },
+  complaintUpvoteBtnText: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  complaintPillClosed: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 7,
+    paddingVertical: 3.5,
+    borderRadius: 6,
+  },
+  complaintPillClosedText: {
+    fontSize: 9.5,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  complaintPillAccused: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 7,
+    paddingVertical: 3.5,
+    borderRadius: 6,
+  },
+  complaintPillAccusedText: {
+    fontSize: 9.5,
+    fontWeight: '700',
+    color: '#B45309',
+  },
+  complaintPillReporter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: '#F3E8FF',
+    paddingHorizontal: 7,
+    paddingVertical: 3.5,
+    borderRadius: 6,
+  },
+  complaintPillReporterText: {
+    fontSize: 9.5,
+    fontWeight: '700',
+    color: '#7E22CE',
+  },
+  complaintPillVoted: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 7,
+    paddingVertical: 3.5,
+    borderRadius: 6,
+  },
+  complaintPillVotedText: {
+    fontSize: 9.5,
+    fontWeight: '700',
+    color: '#059669',
+  },
+  complaintWithdrawBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: '#FFF1F2',
+    borderWidth: 1,
+    borderColor: '#FECDD3',
+    paddingHorizontal: 7,
+    paddingVertical: 3.5,
+    borderRadius: 6,
+  },
+  complaintWithdrawBtnText: {
+    fontSize: 9.5,
+    fontWeight: '700',
+    color: '#E11D48',
+  },
+  complaintFeedbackBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingHorizontal: 7,
+    paddingVertical: 3.5,
+    borderRadius: 6,
+  },
+  complaintFeedbackBtnText: {
+    fontSize: 9.5,
+    fontWeight: '700',
+    color: '#475569',
   },
 });

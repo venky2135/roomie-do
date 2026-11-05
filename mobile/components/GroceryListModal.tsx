@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+﻿import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -287,7 +287,7 @@ export default function GroceryListModal({ visible, onClose }: Props) {
     >
       <KeyboardAvoidingView
         style={styles.overlay}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior='padding'
       >
         <TouchableOpacity
           style={styles.backdrop}

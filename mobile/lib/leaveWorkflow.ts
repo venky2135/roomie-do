@@ -1,5 +1,6 @@
 import { supabaseAdmin } from './supabase';
 import { notifyLeaveRequested, notifyLeaveApproved } from './api';
+import { toLocalDateString, normalizeDateString, calculateUserStreak } from './streakWorkflow';
 
 export interface LeaveRequestMetadata {
   type: 'leave_request';
@@ -43,8 +44,8 @@ export function parseLeaveMetadata(notesRaw: string | null | undefined): LeaveRe
       return {
         type: 'leave_request',
         duration: parsed.duration || 'Short Leave',
-        startDate: parsed.startDate,
-        endDate: parsed.endDate,
+        startDate: normalizeDateString(parsed.startDate) || parsed.startDate,
+        endDate: normalizeDateString(parsed.endDate) || parsed.endDate,
         reason: parsed.reason || '',
         requestedXp: Number(parsed.requestedXp) || 0,
         comments: parsed.comments || '',
@@ -62,7 +63,6 @@ export function parseLeaveMetadata(notesRaw: string | null | undefined): LeaveRe
  * Find or create the dedicated Leave template for the house.
  */
 export async function getOrCreateLeaveTemplate(houseId: string): Promise<string | null> {
-  // Check if exists
   const { data: existing } = await supabaseAdmin
     .from('task_templates')
     .select('id')
@@ -73,7 +73,6 @@ export async function getOrCreateLeaveTemplate(houseId: string): Promise<string 
 
   if (existing?.id) return existing.id;
 
-  // Create one
   const { data: created, error } = await supabaseAdmin
     .from('task_templates')
     .insert({
@@ -83,7 +82,7 @@ export async function getOrCreateLeaveTemplate(houseId: string): Promise<string 
       category: 'Leave',
       base_credits: 0,
       photo_required: false,
-      is_active: false, // hidden from regular chore list
+      is_active: false,
     })
     .select('id')
     .single();
@@ -119,8 +118,8 @@ export async function submitLeaveRequest(params: {
     const leaveMeta: LeaveRequestMetadata = {
       type: 'leave_request',
       duration: params.duration.trim(),
-      startDate: params.startDate,
-      endDate: params.endDate,
+      startDate: normalizeDateString(params.startDate) || params.startDate,
+      endDate: normalizeDateString(params.endDate) || params.endDate,
       reason: params.reason.trim(),
       requestedXp: Math.max(0, Math.round(Number(params.requestedXp) || 0)),
       comments: (params.comments || '').trim(),
@@ -204,7 +203,6 @@ export async function approveLeaveRequest(params: {
       .eq('house_id', params.houseId);
 
     const totalMembers = houseMembers?.length || 1;
-    // All other members must approve (totalMembers - 1)
     const requiredApprovals = Math.max(1, totalMembers - 1);
 
     const updatedApprovals = [...currentMeta.approvals, params.approverUserId];
@@ -229,19 +227,23 @@ export async function approveLeaveRequest(params: {
       return { success: false, error: updateErr.message };
     }
 
-    // 4. If fully approved, award the requested XP to requester's profile
-    if (isFullyApproved && currentMeta.requestedXp > 0) {
-      const requester = log.profiles;
-      if (requester) {
-        await supabaseAdmin
-          .from('profiles')
-          .update({
-            xp: (requester.xp || 0) + currentMeta.requestedXp,
-            total_credits: (requester.total_credits || 0) + currentMeta.requestedXp,
-            last_active_at: new Date().toISOString(),
-          })
-          .eq('id', requester.id);
+    // 4. If fully approved, award the requested XP to requester's profile and recalculate streak
+    if (isFullyApproved) {
+      if (currentMeta.requestedXp > 0) {
+        const requester = log.profiles;
+        if (requester) {
+          await supabaseAdmin
+            .from('profiles')
+            .update({
+              xp: (requester.xp || 0) + currentMeta.requestedXp,
+              total_credits: (requester.total_credits || 0) + currentMeta.requestedXp,
+              last_active_at: new Date().toISOString(),
+            })
+            .eq('id', requester.id);
+        }
       }
+      // Leave preserves/freezes streak
+      calculateUserStreak(log.user_id).catch(() => {});
     }
 
     notifyLeaveApproved({
@@ -282,10 +284,14 @@ export async function deleteLeaveRequest(
 }
 
 /**
- * Check which users in the house currently have an approved active leave for today.
+ * Check which users in the house have applied for leave (pending or approved)
+ * for the current period or today.
  * Returns array of user IDs on leave.
  */
-export async function fetchActiveLeaves(houseId: string): Promise<string[]> {
+export async function fetchActiveLeaves(
+  houseId: string,
+  period: 'week' | 'month' | 'all' = 'week'
+): Promise<string[]> {
   try {
     const { data: memberProfiles } = await supabaseAdmin
       .from('profiles')
@@ -295,37 +301,63 @@ export async function fetchActiveLeaves(houseId: string): Promise<string[]> {
     const memberIds = memberProfiles?.map((m) => m.id) || [];
     if (memberIds.length === 0) return [];
 
-    // Query recent logs with Leave category or task_logs of members
+    // Query recent logs of members
     const { data: logs } = await supabaseAdmin
       .from('task_logs')
       .select('id, user_id, notes, completed_at, task_templates(category)')
       .in('user_id', memberIds)
       .order('completed_at', { ascending: false })
-      .limit(30);
+      .limit(60);
 
     if (!logs) return [];
 
-    const todayStr = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-    const todayTime = new Date().setHours(0, 0, 0, 0);
+    const today = new Date();
+    const todayStr = toLocalDateString(today);
+
+    // Compute period start date string for ranking chart range
+    let periodStartStr: string | null = null;
+    if (period === 'week') {
+      const d = new Date(today);
+      d.setDate(d.getDate() - 7);
+      periodStartStr = toLocalDateString(d);
+    } else if (period === 'month') {
+      const d = new Date(today);
+      d.setDate(d.getDate() - 30);
+      periodStartStr = toLocalDateString(d);
+    }
 
     const onLeaveUserIds = new Set<string>();
 
     for (const log of logs) {
       const meta = parseLeaveMetadata(log.notes);
-      if (meta && meta.status === 'approved') {
-        // If dates are provided, check if today is within range
-        if (meta.startDate && meta.endDate) {
-          if (todayStr >= meta.startDate && todayStr <= meta.endDate) {
+      // Anyone who applied for leave (pending or approved, not rejected)
+      if (meta && meta.status !== 'rejected') {
+        const normStart = normalizeDateString(meta.startDate);
+        const normEnd = normalizeDateString(meta.endDate);
+
+        if (normStart && normEnd) {
+          // Check if active today
+          const isActiveToday = todayStr >= normStart && todayStr <= normEnd;
+
+          // Check if overlaps with the selected ranking period
+          let overlapsPeriod = false;
+          if (period === 'all') {
+            overlapsPeriod = isActiveToday || true;
+          } else if (periodStartStr) {
+            overlapsPeriod = normStart <= todayStr && normEnd >= periodStartStr;
+          }
+
+          if (isActiveToday || overlapsPeriod) {
             onLeaveUserIds.add(log.user_id);
           }
-        } else if (meta.startDate) {
-          if (todayStr >= meta.startDate) {
+        } else if (normStart) {
+          if (todayStr >= normStart) {
             onLeaveUserIds.add(log.user_id);
           }
         } else {
-          // Check if approved within last 7 days as active leave
-          const approvedTime = log.completed_at ? new Date(log.completed_at).getTime() : 0;
-          const diffDays = (Date.now() - approvedTime) / (1000 * 60 * 60 * 24);
+          // Fallback: check if submitted within last 7 days as active leave
+          const completedTime = log.completed_at ? new Date(log.completed_at).getTime() : 0;
+          const diffDays = (Date.now() - completedTime) / (1000 * 60 * 60 * 24);
           if (diffDays <= 7) {
             onLeaveUserIds.add(log.user_id);
           }

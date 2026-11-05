@@ -195,6 +195,80 @@ router.post('/notify-leave-approved', authMiddleware, async (req: AuthRequest, r
   }
 });
 
+// POST /api/notifications/notify-complaint-raised — Notify housemates when an anonymous complaint is raised
+router.post('/notify-complaint-raised', authMiddleware, async (req: AuthRequest, res: Response): Promise<void> => {
+  const userId = req.userId!;
+  const { logId, accusedUsername, category, title } = req.body;
+
+  try {
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('house_id')
+      .eq('id', userId)
+      .single();
+
+    if (!profile || !profile.house_id) {
+      res.status(400).json({ error: 'User does not belong to a house' });
+      return;
+    }
+
+    const result = await NotificationService.sendToHouse(
+      profile.house_id,
+      {
+        title: '🤫 Anonymous Complaint Raised',
+        body: `An anonymous complaint was raised against ${accusedUsername || 'a roommate'}: "${title || category}". Tap to review and vote!`,
+        data: {
+          type: 'anonymous_complaint_raised',
+          logId: String(logId || ''),
+        },
+      },
+      userId
+    );
+
+    res.json({ success: true, result });
+  } catch (err: any) {
+    console.error('Failed to broadcast complaint raised notification:', err);
+    res.status(500).json({ error: err.message || 'Failed to broadcast complaint' });
+  }
+});
+
+// POST /api/notifications/notify-complaint-upheld — Notify house when complaint is upheld and streak penalty applied
+router.post('/notify-complaint-upheld', authMiddleware, async (req: AuthRequest, res: Response): Promise<void> => {
+  const userId = req.userId!;
+  const { logId, accusedUserId, accusedUsername, title, streakPenalty = 10 } = req.body;
+
+  try {
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('house_id')
+      .eq('id', userId)
+      .single();
+
+    if (!profile || !profile.house_id) {
+      res.status(400).json({ error: 'User does not belong to a house' });
+      return;
+    }
+
+    const result = await NotificationService.sendToHouse(
+      profile.house_id,
+      {
+        title: '⚠️ Complaint Upheld: -10 Streaks Penalty!',
+        body: `Roommates voted to uphold the complaint against ${accusedUsername || 'roommate'}. -${streakPenalty} streaks penalty applied! 🔥`,
+        data: {
+          type: 'complaint_upheld',
+          logId: String(logId || ''),
+          accusedUserId: String(accusedUserId || ''),
+        },
+      }
+    );
+
+    res.json({ success: true, result });
+  } catch (err: any) {
+    console.error('Failed to notify complaint upheld:', err);
+    res.status(500).json({ error: err.message || 'Failed to send complaint upheld notification' });
+  }
+});
+
 // POST /api/notifications/notify-marketplace-created — Notify housemates when a bounty task goes live
 router.post('/notify-marketplace-created', authMiddleware, async (req: AuthRequest, res: Response): Promise<void> => {
   const userId = req.userId!;

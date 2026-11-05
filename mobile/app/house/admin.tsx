@@ -3,6 +3,7 @@ import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   TextInput, Modal, Alert, Switch, RefreshControl, Platform,
   KeyboardAvoidingView,
+  Keyboard,
 } from 'react-native';
 import { router } from 'expo-router';
 import { fetchTasks, upsertTask, toggleTask, regenerateCode, removeMember } from '../../lib/api';
@@ -33,6 +34,7 @@ export default function AdminScreen() {
           .neq('category', 'Marketplace')
           .neq('category', 'Leave')
           .neq('category', 'WeeklyStakes')
+          .neq('category', 'Complaint')
           .order('category'),
         supabaseAdmin.from('profiles').select('*').eq('house_id', profile.house_id),
         supabaseAdmin.from('houses').select('*').eq('id', profile.house_id).single(),
@@ -235,8 +237,22 @@ export default function AdminScreen() {
       ))}
 
       {/* Task Edit Modal */}
-      <Modal visible={modalVisible} transparent animationType="slide" onRequestClose={() => setModalVisible(false)}>
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalOverlay}>
+      <Modal
+        visible={modalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setModalVisible(false)}
+        statusBarTranslucent
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.modalOverlay}
+        >
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={() => { Keyboard.dismiss(); setModalVisible(false); }}
+          />
           <ScrollView
             style={styles.modalCard}
             keyboardShouldPersistTaps="handled"

@@ -110,6 +110,21 @@ export const notifyLeaveApproved = (payload: {
   duration?: string;
 }) => api.post('/api/notifications/notify-leave-approved', payload);
 
+export const notifyComplaintRaised = (payload: {
+  logId: string;
+  accusedUsername: string;
+  category: string;
+  title: string;
+}) => api.post('/api/notifications/notify-complaint-raised', payload);
+
+export const notifyComplaintUpheld = (payload: {
+  logId: string;
+  accusedUserId: string;
+  accusedUsername: string;
+  title: string;
+  streakPenalty?: number;
+}) => api.post('/api/notifications/notify-complaint-upheld', payload);
+
 export const notifyMarketplaceCreated = (payload: {
   taskId: string;
   title: string;

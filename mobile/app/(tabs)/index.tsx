@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+﻿import React, { useEffect, useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -12,6 +12,7 @@ import {
   Platform,
   ActivityIndicator,
   KeyboardAvoidingView,
+  Keyboard,
 } from 'react-native';
 import { router } from 'expo-router';
 import Ionicons from '@expo/vector-icons/Ionicons';
@@ -22,6 +23,7 @@ import { COLORS, RADIUS } from '../../constants/theme';
 import { fetchActiveLeaves } from '../../lib/leaveWorkflow';
 import { isLogApproved } from '../../lib/taskWorkflow';
 import { fetchWeeklyStakes, saveWeeklyStakes, WeeklyStakes } from '../../lib/stakesWorkflow';
+import { calculateUserStreak, calculateAndSyncHouseStreaks } from '../../lib/streakWorkflow';
 
 type Period = 'week' | 'month' | 'all';
 
@@ -39,6 +41,7 @@ export default function HomeScreen() {
   const { profile, refreshProfile } = useAuthStore();
   const [leaderboard, setLeaderboard] = useState<LeaderboardMember[]>([]);
   const [onLeaveUserIds, setOnLeaveUserIds] = useState<string[]>([]);
+  const [userStreak, setUserStreak] = useState<number | null>(null);
   const [period, setPeriod] = useState<Period>('week');
   const [todayCount, setTodayCount] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
@@ -56,8 +59,15 @@ export default function HomeScreen() {
 
     // Load active approved leaves for house
     try {
-      const leaves = await fetchActiveLeaves(profile.house_id);
+      const leaves = await fetchActiveLeaves(profile.house_id, p);
       setOnLeaveUserIds(leaves);
+    } catch (_) {}
+
+    // Calculate user streak and sync house streaks
+    try {
+      const s = await calculateUserStreak(profile.id);
+      setUserStreak(s);
+      calculateAndSyncHouseStreaks(profile.house_id).catch(() => {});
     } catch (_) {}
 
     // Load weekly stakes (bounty & penalty)
@@ -208,6 +218,7 @@ export default function HomeScreen() {
 
   const topper = leaderboard[0];
   const maxCredits = Math.max(...leaderboard.map((m) => m.periodCredits), 20);
+  const streakCount = userStreak !== null ? userStreak : (profile?.streak_days ?? 0);
 
   return (
     <ScrollView
@@ -274,8 +285,19 @@ export default function HomeScreen() {
                   {isLead && (
                     <Ionicons name="ribbon" size={11} color="#FFD700" style={{ marginBottom: -2 }} />
                   )}
-                  <View style={[styles.runnerBubble, member.id === profile?.id && styles.runnerBubbleMe]}>
+                  <View
+                    style={[
+                      styles.runnerBubble,
+                      member.id === profile?.id && styles.runnerBubbleMe,
+                      onLeaveUserIds.includes(member.id) && styles.runnerBubbleOnLeave,
+                    ]}
+                  >
                     <Text style={styles.runnerBubbleText}>{member.avatar_url || '🧑'}</Text>
+                    {onLeaveUserIds.includes(member.id) && (
+                      <View style={styles.runnerLeaveDot}>
+                        <Ionicons name="airplane" size={6} color="#FFF" />
+                      </View>
+                    )}
                   </View>
                   <Text style={styles.runnerName} numberOfLines={1}>
                     {member.id === profile?.id ? 'You' : member.username}
@@ -506,8 +528,22 @@ export default function HomeScreen() {
       </View>
 
       {/* Modal: Edit Weekly Bounty & Penalty (Admin Only) */}
-      <Modal visible={editingStakes} transparent animationType="slide" onRequestClose={() => setEditingStakes(false)}>
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalOverlay}>
+      <Modal
+        visible={editingStakes}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setEditingStakes(false)}
+        statusBarTranslucent
+      >
+        <KeyboardAvoidingView
+          style={styles.modalOverlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        >
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={() => { Keyboard.dismiss(); setEditingStakes(false); }}
+          />
           <View style={[styles.modalCard, { maxHeight: '85%' }]}>
             <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 10 }}>
             <View style={styles.modalHeader}>
@@ -515,7 +551,10 @@ export default function HomeScreen() {
                 <Ionicons name="trophy" size={20} color="#D97706" />
                 <Text style={styles.modalTitle}>Update Weekly Stakes</Text>
               </View>
-              <TouchableOpacity onPress={() => setEditingStakes(false)}>
+              <TouchableOpacity
+                onPress={() => setEditingStakes(false)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
                 <Ionicons name="close" size={22} color={COLORS.textSecondary} />
               </TouchableOpacity>
             </View>
@@ -619,13 +658,34 @@ const styles = StyleSheet.create({
   streakBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFF4E5',
+    backgroundColor: '#F1F5F9',
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: RADIUS.full,
     gap: 3,
   },
-  streakText: { fontSize: 11, fontWeight: '700', color: COLORS.accent },
+  streakBadgeActive: {
+    backgroundColor: '#FFF4E5',
+    borderWidth: 1,
+    borderColor: '#FFE0B2',
+  },
+  streakText: { fontSize: 11, fontWeight: '700', color: '#64748B' },
+  streakTextActive: { color: COLORS.accent, fontWeight: '800' },
+  runnerBubbleOnLeave: {
+    borderColor: '#64748B',
+    backgroundColor: '#1E293B',
+  },
+  runnerLeaveDot: {
+    position: 'absolute',
+    top: -3,
+    right: -3,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#0F172A',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   topperPill: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -788,17 +848,52 @@ const styles = StyleSheet.create({
   rankPoints: { fontSize: 11, fontWeight: '700', color: '#1A1A24' },
   chartEmpty: { paddingVertical: 24, alignItems: 'center', justifyContent: 'center' },
   chartEmptyText: { fontSize: 11, color: '#9090A0', fontStyle: 'italic' },
-  barFillOnLeave: { backgroundColor: '#94A3B8' },
-  barValueOnLeave: { color: '#94A3B8' },
-  footerNameOnLeave: { color: '#64748B' },
+  columnItemOnLeave: {
+    opacity: 0.95,
+  },
+  barVerticalTrackOnLeave: {
+    backgroundColor: '#1E293B',
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  barFillOnLeave: {
+    backgroundColor: '#475569',
+  },
+  barDarkoutOverlay: {
+    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(15, 23, 42, 0.45)',
+  },
+  barValueOnLeave: {
+    color: '#64748B',
+    fontWeight: '700',
+  },
+  footerAvatarOnLeave: {
+    opacity: 0.6,
+  },
+  footerNameOnLeave: {
+    color: '#64748B',
+    fontWeight: '600',
+  },
+  footerRankOnLeave: {
+    color: '#94A3B8',
+  },
   columnLeaveBadge: {
-    backgroundColor: '#E2E8F0',
-    paddingHorizontal: 3,
+    backgroundColor: '#0F172A',
+    paddingHorizontal: 4,
     paddingVertical: 1,
     borderRadius: 3,
-    marginTop: 1,
+    marginTop: 2,
+    borderWidth: 1,
+    borderColor: '#334155',
   },
-  columnLeaveText: { fontSize: 6, fontWeight: '800', color: '#64748B' },
+  columnLeaveText: {
+    fontSize: 6,
+    fontWeight: '800',
+    color: '#F1F5F9',
+    letterSpacing: 0.3,
+  },
   rankRowOnLeave: {
     backgroundColor: '#F1F5F9',
     borderRadius: 6,

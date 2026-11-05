@@ -201,6 +201,7 @@ router.get('/:houseId', authMiddleware, async (req: AuthRequest, res: Response):
     .neq('category', 'Marketplace')
     .neq('category', 'Leave')
     .neq('category', 'WeeklyStakes')
+    .neq('category', 'Complaint')
     .order('category');
 
   if (error) {

@@ -14,6 +14,7 @@ import {
   ScrollView,
   Platform,
   KeyboardAvoidingView,
+  Keyboard,
 } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useAuthStore } from '../../store/useAuthStore';
@@ -39,10 +40,9 @@ export default function MarketplaceScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState<'all' | 'open' | 'claimed'>('all');
 
-  // Add Task Modal State (Picker from Admin Tasks)
+  // Add Task Modal State (Picker from Admin Tasks or Custom)
   const [showAddModal, setShowAddModal] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<TaskTemplate | null>(null);
-  const [customBounty, setCustomBounty] = useState('');
   const [taskNote, setTaskNote] = useState('');
   const [addingTask, setAddingTask] = useState(false);
 
@@ -64,7 +64,8 @@ export default function MarketplaceScreen() {
       const isRegularChore = (category: string) =>
         category !== 'Marketplace' &&
         category !== 'Leave' &&
-        category !== 'WeeklyStakes';
+        category !== 'WeeklyStakes' &&
+        category !== 'Complaint';
 
       try {
         const templatesRes = await fetchTasks(profile.house_id);
@@ -80,6 +81,7 @@ export default function MarketplaceScreen() {
           .neq('category', 'Marketplace')
           .neq('category', 'Leave')
           .neq('category', 'WeeklyStakes')
+          .neq('category', 'Complaint')
           .order('category');
         regularTemplates = (data || []).filter((t: any) => isRegularChore(t.category));
       }
@@ -98,18 +100,19 @@ export default function MarketplaceScreen() {
     setRefreshing(false);
   };
 
-  const handleSelectTemplate = (template: TaskTemplate) => {
-    setSelectedTemplate(template);
-    setCustomBounty(String(template.base_credits || 25));
+  const closeAddModal = () => {
+    setShowAddModal(false);
+    setSelectedTemplate(null);
+    setTaskNote('');
   };
 
   const handlePostFromAdminTask = async () => {
     if (!selectedTemplate) {
-      Alert.alert('Select a Task', 'Please tap a task from the list below to add it.');
+      Alert.alert('Required', 'Please select a task from the list.');
       return;
     }
 
-    const bounty = parseInt(customBounty, 10) || selectedTemplate.base_credits || 25;
+    const bounty = selectedTemplate.base_credits || 25;
     setAddingTask(true);
     const res = await createMarketplaceTask({
       houseId: profile!.house_id!,
@@ -128,15 +131,12 @@ export default function MarketplaceScreen() {
         bountyXp: bounty,
       }).catch((e) => console.warn('[Push] Failed to broadcast marketplace task:', e));
 
-      setShowAddModal(false);
-      setSelectedTemplate(null);
-      setTaskNote('');
+      closeAddModal();
       loadData();
     } else {
       Alert.alert('Error', res.error || 'Failed to add task to marketplace.');
     }
   };
-
   const handleClaim = async (task: MarketplaceTask) => {
     if (!profile?.id) return;
 
@@ -256,7 +256,7 @@ export default function MarketplaceScreen() {
           <Text style={styles.title}>Marketplace</Text>
           <Text style={styles.sub}>Claim chores or add tasks for roommates</Text>
         </View>
-        <TouchableOpacity style={styles.addBtn} onPress={() => setShowAddModal(true)}>
+        <TouchableOpacity style={styles.addBtn} onPress={() => { setShowAddModal(true); setSelectedTemplate(null); setTaskNote(''); }}>
           <Ionicons name="add" size={14} color="#FFF" />
           <Text style={styles.addBtnText}>Add</Text>
         </TouchableOpacity>
@@ -353,95 +353,109 @@ export default function MarketplaceScreen() {
         />
       )}
 
-      {/* ─── Modal: Pick an Admin Task to Add to Marketplace ─── */}
-      <Modal visible={showAddModal} transparent animationType="slide" onRequestClose={() => setShowAddModal(false)}>
+      {/* ─── Modal: Add Task to Marketplace ─── */}
+      <Modal
+        visible={showAddModal}
+        transparent
+        animationType="slide"
+        onRequestClose={closeAddModal}
+        statusBarTranslucent
+      >
         <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           style={styles.modalOverlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         >
+          <TouchableOpacity
+            style={styles.modalBackdrop}
+            activeOpacity={1}
+            onPress={() => { Keyboard.dismiss(); closeAddModal(); }}
+          />
           <View style={styles.modalBox}>
+            {/* Header */}
             <View style={styles.modalTopBar}>
-              <Text style={styles.modalHead}>Add Task to Marketplace</Text>
-              <TouchableOpacity onPress={() => setShowAddModal(false)}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Ionicons name="storefront" size={18} color={COLORS.primary} />
+                <Text style={styles.modalHead}>Post a Task</Text>
+              </View>
+              <TouchableOpacity onPress={closeAddModal} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
                 <Ionicons name="close" size={20} color="#7E7E8F" />
               </TouchableOpacity>
             </View>
-            <Text style={styles.modalHint}>Choose from the tasks added by your house admin:</Text>
+
+            <Text style={styles.modalHint}>Select a house task to post to the marketplace</Text>
 
             <ScrollView
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
-              contentContainerStyle={{ paddingBottom: 16 }}
+              contentContainerStyle={{ paddingBottom: 24 }}
             >
-              {/* List of Admin Task Templates */}
+              {/* Task List */}
               {adminTemplates.length === 0 ? (
-                <View style={{ paddingVertical: 20, alignItems: 'center' }}>
-                  <Ionicons name="clipboard-outline" size={24} color="#B0BEC5" />
-                  <Text style={{ fontSize: 11, color: '#7E7E8F', marginTop: 6, textAlign: 'center' }}>
-                    No admin chore templates available yet.
-                  </Text>
+                <View style={styles.emptyTaskHint}>
+                  <Ionicons name="list-outline" size={22} color="#B0BEC5" />
+                  <Text style={styles.emptyTaskHintText}>No tasks available. Admin must add tasks first.</Text>
                 </View>
               ) : (
-                <View style={{ marginBottom: 8 }}>
-                  {adminTemplates.map((template) => {
-                    const isSelected = selectedTemplate?.id === template.id;
-                    return (
-                      <TouchableOpacity
-                        key={template.id}
-                        style={[styles.templateItem, isSelected && styles.templateItemSelected]}
-                        onPress={() => handleSelectTemplate(template)}
-                      >
-                        <View style={styles.templateIcon}>
-                          <AppIcon name={template.icon} category={template.category} size={18} color={COLORS.primary} />
-                        </View>
-                        <View style={{ flex: 1 }}>
-                          <Text style={[styles.templateName, isSelected && styles.templateNameSelected]}>
-                            {template.name}
-                          </Text>
-                          <Text style={styles.templateCat}>{template.category} · Base: {template.base_credits} XP</Text>
-                        </View>
-                        {isSelected ? (
-                          <Ionicons name="checkmark-circle" size={18} color={COLORS.primary} />
-                        ) : (
-                          <Ionicons name="chevron-forward" size={14} color="#B0BEC5" />
-                        )}
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
+                adminTemplates.map((template) => {
+                  const isSelected = selectedTemplate?.id === template.id;
+                  return (
+                    <TouchableOpacity
+                      key={template.id}
+                      style={[styles.taskPickRow, isSelected && styles.taskPickRowSelected]}
+                      onPress={() => setSelectedTemplate(isSelected ? null : template)}
+                      activeOpacity={0.75}
+                    >
+                      <View style={[styles.taskPickIcon, isSelected && styles.taskPickIconSelected]}>
+                        <AppIcon name={template.icon} category={template.category} size={16} color={isSelected ? '#FFF' : COLORS.primary} />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.taskPickName, isSelected && styles.taskPickNameSelected]}>{template.name}</Text>
+                        {template.category ? (
+                          <Text style={styles.taskPickCat}>{template.category}</Text>
+                        ) : null}
+                      </View>
+                      <View style={[styles.xpBadge, isSelected && styles.xpBadgeSelected]}>
+                        <Ionicons name="flash" size={10} color={isSelected ? '#FFF' : COLORS.primary} />
+                        <Text style={[styles.xpBadgeText, isSelected && styles.xpBadgeTextSelected]}>
+                          +{template.base_credits} XP
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })
               )}
 
-              {/* Configuration for Selected Task */}
+              {/* Notes */}
+              <Text style={[styles.inputLabelSmall, { marginTop: 12 }]}>Notes / Instructions (optional)</Text>
+              <TextInput
+                style={styles.noteInput}
+                placeholder="e.g. Please finish before 6 PM..."
+                placeholderTextColor="#A0A0B0"
+                value={taskNote}
+                onChangeText={setTaskNote}
+                multiline
+                numberOfLines={3}
+              />
+
+              {/* Selected XP Preview */}
               {selectedTemplate && (
-                <View style={styles.selectedConfigBox}>
-                  <View style={styles.bountyRow}>
-                    <Text style={styles.fieldLabel}>XP Bounty:</Text>
-                    <TextInput
-                      style={styles.bountyInput}
-                      keyboardType="numeric"
-                      value={customBounty}
-                      onChangeText={setCustomBounty}
-                    />
-                    <Text style={styles.xpSuffix}>XP</Text>
-                  </View>
-
-                  <TextInput
-                    style={styles.noteInput}
-                    placeholder="Optional note / instructions..."
-                    placeholderTextColor="#A0A0B0"
-                    value={taskNote}
-                    onChangeText={setTaskNote}
-                  />
+                <View style={styles.selectedPreview}>
+                  <Ionicons name="checkmark-circle" size={14} color={COLORS.success} />
+                  <Text style={styles.selectedPreviewText}>
+                    Posting "{selectedTemplate.name}" · +{selectedTemplate.base_credits} XP reward
+                  </Text>
                 </View>
               )}
 
+              {/* Submit */}
               <TouchableOpacity
                 style={[styles.postSubmitBtn, (!selectedTemplate || addingTask) && { opacity: 0.5 }]}
                 onPress={handlePostFromAdminTask}
                 disabled={!selectedTemplate || addingTask}
               >
+                <Ionicons name="cloud-upload-outline" size={16} color="#FFF" />
                 <Text style={styles.postSubmitText}>
-                  {addingTask ? 'Posting...' : selectedTemplate ? `Post "${selectedTemplate.name}"` : 'Select a Task Above'}
+                  {addingTask ? 'Posting...' : selectedTemplate ? `Post Task · +${selectedTemplate.base_credits} XP` : 'Select a task above'}
                 </Text>
               </TouchableOpacity>
             </ScrollView>
@@ -450,15 +464,32 @@ export default function MarketplaceScreen() {
       </Modal>
 
       {/* ─── Modal: Submit Task Completion & Photo Proof ─── */}
-      <Modal visible={!!completingTask} transparent animationType="slide" onRequestClose={() => setCompletingTask(null)}>
+      <Modal
+        visible={!!completingTask}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setCompletingTask(null)}
+        statusBarTranslucent
+      >
         <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           style={styles.modalOverlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         >
+          <TouchableOpacity
+            style={styles.modalBackdrop}
+            activeOpacity={1}
+            onPress={() => {
+              Keyboard.dismiss();
+              setCompletingTask(null);
+            }}
+          />
           <View style={styles.modalBox}>
             <View style={styles.modalTopBar}>
               <Text style={styles.modalHead}>Complete Chore</Text>
-              <TouchableOpacity onPress={() => setCompletingTask(null)}>
+              <TouchableOpacity
+                onPress={() => setCompletingTask(null)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
                 <Ionicons name="close" size={20} color="#7E7E8F" />
               </TouchableOpacity>
             </View>
@@ -466,21 +497,24 @@ export default function MarketplaceScreen() {
             <ScrollView
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
-              contentContainerStyle={{ paddingBottom: 16 }}
+              contentContainerStyle={{ paddingBottom: 24 }}
             >
               <Text style={styles.taskTitleMini}>{completingTask?.title}</Text>
               <Text style={styles.taskBountyMini}>Reward: +{completingTask?.bountyXp} XP upon verification</Text>
 
+              <Text style={styles.inputLabelSmall}>Completion Notes (optional):</Text>
               <TextInput
                 style={styles.noteInput}
                 placeholder="Add completion note (optional)..."
                 placeholderTextColor="#A0A0B0"
                 value={completeNotes}
                 onChangeText={setCompleteNotes}
+                multiline
+                numberOfLines={2}
               />
 
               {/* Photo Proof */}
-              <Text style={styles.fieldLabel}>Photo Proof:</Text>
+              <Text style={[styles.inputLabelSmall, { marginTop: 10 }]}>Photo Proof:</Text>
               {completePhotoUri ? (
                 <View style={styles.photoBox}>
                   <Image source={{ uri: completePhotoUri }} style={styles.photoImg} />
@@ -609,90 +643,148 @@ const styles = StyleSheet.create({
     gap: 3,
   },
   completePillText: { color: '#FFF', fontSize: 10, fontWeight: '700' },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'flex-end',
+  },
+  modalBackdrop: {
+    ...StyleSheet.absoluteFill,
+  },
   modalBox: {
     backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: RADIUS.md,
-    borderTopRightRadius: RADIUS.md,
-    padding: 14,
-    maxHeight: '85%',
+    borderTopLeftRadius: RADIUS.lg,
+    borderTopRightRadius: RADIUS.lg,
+    paddingTop: 14,
+    paddingHorizontal: 16,
+    paddingBottom: Platform.OS === 'ios' ? 24 : 16,
+    maxHeight: '88%',
   },
-  modalTopBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
-  modalHead: { fontSize: 14, fontWeight: '800', color: '#1A1A24' },
+  modalTopBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  modalHead: { fontSize: 15, fontWeight: '800', color: '#1A1A24' },
   modalHint: { fontSize: 11, color: '#7E7E8F', marginBottom: 8 },
-  templateList: { maxHeight: 240, marginBottom: 8 },
-  templateItem: {
+
+  inputLabelSmall: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#7E7E8F',
+    textTransform: 'uppercase',
+    marginBottom: 4,
+    marginTop: 4,
+  },
+  taskPickRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 8,
+    gap: 10,
+    backgroundColor: '#F8FAFC',
     borderRadius: RADIUS.sm,
-    borderWidth: 1,
-    borderColor: '#F0F0F2',
-    marginBottom: 4,
-    gap: 8,
+    padding: 10,
+    marginBottom: 6,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
   },
-  templateItemSelected: {
-    backgroundColor: '#E8F5E9',
+  taskPickRowSelected: {
+    backgroundColor: '#EEF2FF',
     borderColor: COLORS.primary,
   },
-  templateIcon: {
-    width: 28,
-    height: 28,
-    borderRadius: RADIUS.sm,
-    backgroundColor: '#F5F5F0',
+  taskPickIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: '#E8F5E9',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  templateName: { fontSize: 12, fontWeight: '600', color: '#1A1A24' },
-  templateNameSelected: { color: COLORS.primary, fontWeight: '700' },
-  templateCat: { fontSize: 9, color: '#9090A0', marginTop: 1 },
-  selectedConfigBox: {
-    backgroundColor: '#F9F9FB',
-    borderRadius: RADIUS.sm,
-    padding: 8,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: '#ECECEC',
+  taskPickIconSelected: {
+    backgroundColor: COLORS.primary,
   },
-  bountyRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 },
-  fieldLabel: { fontSize: 10, fontWeight: '700', color: '#7E7E8F' },
-  bountyInput: {
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#ECECEC',
-    borderRadius: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    fontSize: 12,
+  taskPickName: {
+    fontSize: 13,
     fontWeight: '700',
+    color: '#1A1A24',
+  },
+  taskPickNameSelected: {
     color: COLORS.primary,
-    width: 60,
+  },
+  taskPickCat: {
+    fontSize: 10,
+    color: '#9090A0',
+    marginTop: 1,
+  },
+  xpBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    backgroundColor: '#E8F5E9',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: RADIUS.full,
+  },
+  xpBadgeSelected: {
+    backgroundColor: COLORS.primary,
+  },
+  xpBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: COLORS.primary,
+  },
+  xpBadgeTextSelected: {
+    color: '#FFF',
+  },
+  emptyTaskHint: {
+    alignItems: 'center',
+    paddingVertical: 24,
+    gap: 6,
+  },
+  emptyTaskHintText: {
+    fontSize: 12,
+    color: '#9090A0',
     textAlign: 'center',
   },
-  xpSuffix: { fontSize: 10, color: '#7E7E8F', fontWeight: '600' },
-  noteInput: {
-    backgroundColor: '#FFFFFF',
+  selectedPreview: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#F0FDF4',
+    borderRadius: RADIUS.sm,
+    padding: 8,
+    marginTop: 8,
     borderWidth: 1,
-    borderColor: '#ECECEC',
-    borderRadius: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 5,
+    borderColor: '#BBF7D0',
+  },
+  selectedPreviewText: {
     fontSize: 11,
+    color: '#16A34A',
+    fontWeight: '600',
+    flex: 1,
+  },
+  noteInput: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: RADIUS.sm,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 12,
     color: '#1A1A24',
+    minHeight: 60,
+    textAlignVertical: 'top',
   },
   postSubmitBtn: {
     backgroundColor: COLORS.primary,
     borderRadius: RADIUS.sm,
-    paddingVertical: 9,
+    paddingVertical: 12,
     alignItems: 'center',
-    marginTop: 4,
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 6,
+    marginTop: 12,
   },
-  postSubmitText: { color: '#FFF', fontSize: 12, fontWeight: '700' },
-  taskTitleMini: { fontSize: 13, fontWeight: '700', color: '#1A1A24' },
-  taskBountyMini: { fontSize: 11, color: COLORS.primary, fontWeight: '600', marginBottom: 8 },
-  photoBox: { position: 'relative', marginTop: 4, borderRadius: 4, overflow: 'hidden' },
-  photoImg: { width: '100%', height: 130, borderRadius: 4 },
+  postSubmitText: { color: '#FFF', fontSize: 13, fontWeight: '700' },
+  taskTitleMini: { fontSize: 14, fontWeight: '800', color: '#1A1A24' },
+  taskBountyMini: { fontSize: 11, color: COLORS.primary, fontWeight: '700', marginBottom: 8 },
+  photoBox: { position: 'relative', marginTop: 4, borderRadius: 6, overflow: 'hidden' },
+  photoImg: { width: '100%', height: 130, borderRadius: 6 },
   photoDel: { position: 'absolute', top: 6, right: 6, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 12, padding: 4 },
   photoBtns: { flexDirection: 'row', gap: 6, marginTop: 4, marginBottom: 8 },
   photoBtn: {
@@ -703,9 +795,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderStyle: 'dashed',
     borderColor: COLORS.primary,
-    borderRadius: 4,
-    paddingVertical: 8,
+    borderRadius: 6,
+    paddingVertical: 10,
     gap: 4,
   },
-  photoBtnText: { fontSize: 10, color: COLORS.primary, fontWeight: '600' },
+  photoBtnText: { fontSize: 11, color: COLORS.primary, fontWeight: '600' },
 });

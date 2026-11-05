@@ -1,4 +1,5 @@
 import { supabase, supabaseAdmin } from './supabase';
+import { calculateUserStreak } from './streakWorkflow';
 
 export interface TaskLogMetadata {
   note: string;
@@ -197,6 +198,9 @@ export async function verifyTaskLog(
           last_active_at: new Date().toISOString(),
         })
         .eq('id', creator.id);
+
+      // Recalculate streak for chore creator
+      calculateUserStreak(creator.id).catch(() => {});
     }
 
     return { success: true };

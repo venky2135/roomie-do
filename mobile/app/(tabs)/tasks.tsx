@@ -12,7 +12,8 @@ import {
   Image,
   RefreshControl,
   Platform,
-  KeyboardAvoidingView,
+  TouchableWithoutFeedback,
+  Keyboard,
 } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { fetchTasks, notifyChoreLogged } from '../../lib/api';
@@ -23,9 +24,12 @@ import { COLORS, FONTS, SPACING, RADIUS, CATEGORY_COLORS } from '../../constants
 import AppIcon from '../../components/AppIcon';
 import { pickImage, uploadTaskPhoto } from '../../lib/photoUpload';
 import { encodeLogNotes } from '../../lib/taskWorkflow';
+import { calculateUserStreak } from '../../lib/streakWorkflow';
+import { useKeyboard } from '../../lib/useKeyboard';
 
 export default function TasksScreen() {
   const { profile, refreshProfile } = useAuthStore();
+  const { keyboardHeight } = useKeyboard();
   const { tasks, setTasks } = useHouseStore();
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -54,6 +58,7 @@ export default function TasksScreen() {
         .neq('category', 'Marketplace')
         .neq('category', 'Leave')
         .neq('category', 'WeeklyStakes')
+        .neq('category', 'Complaint')
         .order('category');
 
       if (!error && data) {
@@ -61,7 +66,7 @@ export default function TasksScreen() {
       } else {
         // Fallback to backend API
         const res = await fetchTasks(profile.house_id);
-        const regularTasks = res.data.tasks.filter((t: TaskTemplate) => t.category !== 'Marketplace' && t.category !== 'Leave' && t.category !== 'WeeklyStakes');
+        const regularTasks = res.data.tasks.filter((t: TaskTemplate) => t.category !== 'Marketplace' && t.category !== 'Leave' && t.category !== 'WeeklyStakes' && t.category !== 'Complaint');
         setTasks(regularTasks);
       }
     } catch (e) {
@@ -130,6 +135,9 @@ export default function TasksScreen() {
       }).catch((notifyErr) => {
         console.warn('[PushNotification] Failed to broadcast chore notification:', notifyErr);
       });
+
+      // Recalculate streak and refresh auth profile
+      calculateUserStreak(profile.id).then(() => refreshProfile()).catch(() => {});
 
       setSuccessMsg(`Logged! Waiting for 1 roommate approval to award +${selectedTask.base_credits} XP.`);
       setNotes('');
@@ -223,96 +231,113 @@ export default function TasksScreen() {
       )}
 
       {/* Log Task Modal */}
-      <Modal visible={!!selectedTask} transparent animationType="slide" onRequestClose={() => setSelectedTask(null)}>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={styles.modalOverlay}
-        >
-          <View style={styles.modalCard}>
-            {successMsg ? (
-              <View style={styles.successBox}>
-                <Ionicons name="checkmark-circle" size={48} color={COLORS.success} />
-                <Text style={styles.successText}>{successMsg}</Text>
-              </View>
-            ) : (
-              <ScrollView
-                showsVerticalScrollIndicator={false}
-                keyboardShouldPersistTaps="handled"
-                contentContainerStyle={{ paddingBottom: 10 }}
+      <Modal
+        visible={!!selectedTask}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setSelectedTask(null)}
+        statusBarTranslucent
+      >
+        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+          <View
+            style={[
+              styles.modalOverlay,
+              keyboardHeight > 0 && { paddingBottom: keyboardHeight },
+            ]}
+          >
+            <TouchableWithoutFeedback>
+              <View
+                style={[
+                  styles.modalCard,
+                  keyboardHeight > 0 && { maxHeight: '78%' },
+                ]}
               >
-                <View style={styles.modalHeader}>
-                  <View style={styles.modalTitleRow}>
-                    <AppIcon name={selectedTask?.icon} category={selectedTask?.category} size={24} color={COLORS.primary} />
-                    <Text style={styles.modalTitle}>{selectedTask?.name}</Text>
-                  </View>
-                  <TouchableOpacity onPress={() => setSelectedTask(null)}>
-                    <Ionicons name="close" size={24} color={COLORS.textSecondary} />
-                  </TouchableOpacity>
-                </View>
-
-                <Text style={styles.modalCredits}>
-                  Base Reward: +{selectedTask?.base_credits} XP {selectedTask?.photo_required ? '(Photo required)' : '(+5 XP with photo proof)'}
-                </Text>
-
-                <Text style={styles.inputLabel}>Notes (optional)</Text>
-                <TextInput
-                  style={styles.notesInput}
-                  placeholder="e.g. Cleaned oven and wiped shelves"
-                  placeholderTextColor={COLORS.textLight}
-                  value={notes}
-                  onChangeText={setNotes}
-                  multiline
-                />
-
-                {/* Photo Proof Header with Status Badge */}
-                <View style={styles.photoLabelRow}>
-                  <Text style={styles.inputLabel}>Photo Proof</Text>
-                  <View style={selectedTask?.photo_required ? styles.photoReqBadge : styles.photoOptBadge}>
-                    <Ionicons
-                      name={selectedTask?.photo_required ? 'alert-circle' : 'sparkles'}
-                      size={11}
-                      color={selectedTask?.photo_required ? '#D97706' : COLORS.primary}
-                    />
-                    <Text style={selectedTask?.photo_required ? styles.photoReqBadgeText : styles.photoOptBadgeText}>
-                      {selectedTask?.photo_required ? 'Required *' : 'Optional (+5 XP bonus)'}
-                    </Text>
-                  </View>
-                </View>
-
-                {photoUri ? (
-                  <View style={styles.photoPreviewBox}>
-                    <Image source={{ uri: photoUri }} style={styles.photoPreview} />
-                    <TouchableOpacity style={styles.removePhotoBtn} onPress={() => setPhotoUri(null)}>
-                      <Ionicons name="trash" size={16} color="#FFF" />
-                    </TouchableOpacity>
+                {successMsg ? (
+                  <View style={styles.successBox}>
+                    <Ionicons name="checkmark-circle" size={48} color={COLORS.success} />
+                    <Text style={styles.successText}>{successMsg}</Text>
                   </View>
                 ) : (
-                  <View style={styles.photoActionsRow}>
-                    <TouchableOpacity style={styles.photoActionBtn} onPress={() => handlePickPhoto(true)}>
-                      <Ionicons name="camera-outline" size={20} color={COLORS.primary} />
-                      <Text style={styles.photoActionText}>Take Photo</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.photoActionBtn} onPress={() => handlePickPhoto(false)}>
-                      <Ionicons name="images-outline" size={20} color={COLORS.primary} />
-                      <Text style={styles.photoActionText}>Choose from Gallery</Text>
-                    </TouchableOpacity>
-                  </View>
-                )}
+                  <ScrollView
+                    showsVerticalScrollIndicator={false}
+                    keyboardShouldPersistTaps="handled"
+                    contentContainerStyle={{ paddingBottom: 10 }}
+                  >
+                    <View style={styles.modalHeader}>
+                      <View style={styles.modalTitleRow}>
+                        <AppIcon name={selectedTask?.icon} category={selectedTask?.category} size={24} color={COLORS.primary} />
+                        <Text style={styles.modalTitle}>{selectedTask?.name}</Text>
+                      </View>
+                      <TouchableOpacity onPress={() => setSelectedTask(null)}>
+                        <Ionicons name="close" size={24} color={COLORS.textSecondary} />
+                      </TouchableOpacity>
+                    </View>
 
-                <TouchableOpacity
-                  style={[styles.confirmBtn, submitting && { opacity: 0.6 }]}
-                  onPress={handleLogTask}
-                  disabled={submitting}
-                >
-                  <Ionicons name="checkmark-done" size={20} color="#FFF" />
-                  <Text style={styles.confirmBtnText}>
-                    {submitting ? 'Submitting...' : 'Mark as Done'}
-                  </Text>
-                </TouchableOpacity>
-              </ScrollView>
-            )}
+                    <Text style={styles.modalCredits}>
+                      Base Reward: +{selectedTask?.base_credits} XP {selectedTask?.photo_required ? '(Photo required)' : '(+5 XP with photo proof)'}
+                    </Text>
+
+                    <Text style={styles.inputLabel}>Notes (optional)</Text>
+                    <TextInput
+                      style={styles.notesInput}
+                      placeholder="e.g. Cleaned oven and wiped shelves"
+                      placeholderTextColor={COLORS.textLight}
+                      value={notes}
+                      onChangeText={setNotes}
+                      multiline
+                    />
+
+                    {/* Photo Proof Header with Status Badge */}
+                    <View style={styles.photoLabelRow}>
+                      <Text style={styles.inputLabel}>Photo Proof</Text>
+                      <View style={selectedTask?.photo_required ? styles.photoReqBadge : styles.photoOptBadge}>
+                        <Ionicons
+                          name={selectedTask?.photo_required ? 'alert-circle' : 'sparkles'}
+                          size={11}
+                          color={selectedTask?.photo_required ? '#D97706' : COLORS.primary}
+                        />
+                        <Text style={selectedTask?.photo_required ? styles.photoReqBadgeText : styles.photoOptBadgeText}>
+                          {selectedTask?.photo_required ? 'Required *' : 'Optional (+5 XP bonus)'}
+                        </Text>
+                      </View>
+                    </View>
+
+                    {photoUri ? (
+                      <View style={styles.photoPreviewBox}>
+                        <Image source={{ uri: photoUri }} style={styles.photoPreview} />
+                        <TouchableOpacity style={styles.removePhotoBtn} onPress={() => setPhotoUri(null)}>
+                          <Ionicons name="trash" size={16} color="#FFF" />
+                        </TouchableOpacity>
+                      </View>
+                    ) : (
+                      <View style={styles.photoActionsRow}>
+                        <TouchableOpacity style={styles.photoActionBtn} onPress={() => handlePickPhoto(true)}>
+                          <Ionicons name="camera-outline" size={20} color={COLORS.primary} />
+                          <Text style={styles.photoActionText}>Take Photo</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity style={styles.photoActionBtn} onPress={() => handlePickPhoto(false)}>
+                          <Ionicons name="images-outline" size={20} color={COLORS.primary} />
+                          <Text style={styles.photoActionText}>Choose from Gallery</Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
+
+                    <TouchableOpacity
+                      style={[styles.confirmBtn, submitting && { opacity: 0.6 }]}
+                      onPress={handleLogTask}
+                      disabled={submitting}
+                    >
+                      <Ionicons name="checkmark-done" size={20} color="#FFF" />
+                      <Text style={styles.confirmBtnText}>
+                        {submitting ? 'Submitting...' : 'Mark as Done'}
+                      </Text>
+                    </TouchableOpacity>
+                  </ScrollView>
+                )}
+              </View>
+            </TouchableWithoutFeedback>
           </View>
-        </KeyboardAvoidingView>
+        </TouchableWithoutFeedback>
       </Modal>
     </View>
   );
