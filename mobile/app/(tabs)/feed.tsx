@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -11,6 +11,7 @@ import {
   TextInput,
   Alert,
   Platform,
+  KeyboardAvoidingView,
 } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { supabase, supabaseAdmin } from '../../lib/supabase';
@@ -51,7 +52,10 @@ export default function FeedScreen() {
   const [membersCount, setMembersCount] = useState(1);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Anonymous Feedback Modal State
+  // Suppress realtime reload during optimistic reaction/feedback updates to prevent flicker
+  const suppressRealtimeRef = useRef(false);
+
+  // Anonymous Feedback Modal (for chore logs and leave requests) State
   const [feedbackLogId, setFeedbackLogId] = useState<string | null>(null);
   const [feedbackText, setFeedbackText] = useState('');
   const [submittingFeedback, setSubmittingFeedback] = useState(false);
@@ -90,7 +94,7 @@ export default function FeedScreen() {
     const channel = supabase
       .channel('feed-channel')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'task_logs' }, () => {
-        loadFeed();
+        if (!suppressRealtimeRef.current) { loadFeed(); }
       })
       .subscribe();
 
@@ -281,7 +285,10 @@ export default function FeedScreen() {
     setFeedbackText('');
     setFeedbackLogId(null);
 
+    // Suppress realtime reload during feedback write to avoid overwriting optimistic state
+    suppressRealtimeRef.current = true;
     const res = await addAnonymousFeedback(logId, textToSend);
+    suppressRealtimeRef.current = false;
     setSubmittingFeedback(false);
 
     if (!res.success) {
@@ -321,7 +328,10 @@ export default function FeedScreen() {
       })
     );
 
+    // Correct arg order: (logId, userId, emoji) — suppress realtime reload on success to avoid flicker
+    suppressRealtimeRef.current = true;
     const res = await toggleTaskLogReaction(logId, profile.id, emoji);
+    suppressRealtimeRef.current = false;
     if (!res.success) {
       await loadFeed();
     }
@@ -460,6 +470,43 @@ export default function FeedScreen() {
                     </TouchableOpacity>
                   )}
                 </View>
+
+              {/* Leave Feedback Badges */}
+              {(() => {
+                const leaveFeedbacks = (() => {
+                  try {
+                    const p = JSON.parse(item.notes || '');
+                    return Array.isArray(p.feedbacks) ? p.feedbacks : [];
+                  } catch { return []; }
+                })();
+                return leaveFeedbacks.length > 0 ? (
+                  <View style={styles.floatingFeedbackWrapper}>
+                    {leaveFeedbacks.map((fb: any) => (
+                      <View key={fb.id} style={styles.floatingFeedbackBadge}>
+                        <View style={styles.floatingTag}>
+                          <Ionicons name="eye-off" size={11} color="#FFF" />
+                        </View>
+                        <Text style={styles.floatingFeedbackQuote} numberOfLines={2}>
+                          "{fb.text}"
+                        </Text>
+                        <Text style={styles.floatingFeedbackTime}>{timeAgo(fb.createdAt)}</Text>
+                      </View>
+                    ))}
+                  </View>
+                ) : null;
+              })()}
+
+              {/* Leave card footer: Feedback button */}
+              <View style={styles.cardBottomRow}>
+                <View style={{ flex: 1 }} />
+                <TouchableOpacity
+                  style={styles.anonActionBtn}
+                  onPress={() => setFeedbackLogId(item.id)}
+                >
+                  <Ionicons name="chatbubble-ellipses-outline" size={12} color={COLORS.primary} />
+                  <Text style={styles.anonActionText}>Feedback</Text>
+                </TouchableOpacity>
+              </View>
               </View>
             );
           }
@@ -611,8 +658,8 @@ export default function FeedScreen() {
       />
 
       {/* Modal: Add Anonymous Feedback */}
-      <Modal visible={!!feedbackLogId} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
+      <Modal visible={!!feedbackLogId} transparent animationType="fade" onRequestClose={() => setFeedbackLogId(null)}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalOverlay}>
           <View style={styles.modalCard}>
             <View style={styles.modalHeader}>
               <View style={styles.modalTitleRow}>
@@ -649,7 +696,7 @@ export default function FeedScreen() {
               </Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );

@@ -12,7 +12,8 @@
           "color": "#3B82F6",
           "defaultChannel": "roomiedo_general"
         }
-      ]
+      ],
+      "@react-native-community/datetimepicker"
     ],
     "version": "1.0.0",
     "orientation": "portrait",

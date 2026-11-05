@@ -12,6 +12,7 @@ import {
   Image,
   RefreshControl,
   Platform,
+  KeyboardAvoidingView,
 } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { fetchTasks, notifyChoreLogged } from '../../lib/api';
@@ -222,8 +223,11 @@ export default function TasksScreen() {
       )}
 
       {/* Log Task Modal */}
-      <Modal visible={!!selectedTask} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
+      <Modal visible={!!selectedTask} transparent animationType="slide" onRequestClose={() => setSelectedTask(null)}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.modalOverlay}
+        >
           <View style={styles.modalCard}>
             {successMsg ? (
               <View style={styles.successBox}>
@@ -231,7 +235,11 @@ export default function TasksScreen() {
                 <Text style={styles.successText}>{successMsg}</Text>
               </View>
             ) : (
-              <>
+              <ScrollView
+                showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+                contentContainerStyle={{ paddingBottom: 10 }}
+              >
                 <View style={styles.modalHeader}>
                   <View style={styles.modalTitleRow}>
                     <AppIcon name={selectedTask?.icon} category={selectedTask?.category} size={24} color={COLORS.primary} />
@@ -301,10 +309,10 @@ export default function TasksScreen() {
                     {submitting ? 'Submitting...' : 'Mark as Done'}
                   </Text>
                 </TouchableOpacity>
-              </>
+              </ScrollView>
             )}
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );

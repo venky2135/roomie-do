@@ -11,6 +11,7 @@ import {
   Modal,
   TextInput,
   ActivityIndicator,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { router } from 'expo-router';
 import Ionicons from '@expo/vector-icons/Ionicons';
@@ -21,6 +22,7 @@ import { submitLeaveRequest } from '../../lib/leaveWorkflow';
 import { isLogApproved } from '../../lib/taskWorkflow';
 import GroceryListModal from '../../components/GroceryListModal';
 import BadgesJourney from '../../components/BadgesJourney';
+import AppDatePicker from '../../components/AppDatePicker';
 
 export default function ProfileScreen() {
   const { profile, signOut, refreshProfile } = useAuthStore();
@@ -30,9 +32,8 @@ export default function ProfileScreen() {
   // Leave Request Modal State
   const [leaveModalVisible, setLeaveModalVisible] = useState(false);
   const [groceryModalVisible, setGroceryModalVisible] = useState(false);
-  const [leaveDuration, setLeaveDuration] = useState('');
-  const [leaveStartDate, setLeaveStartDate] = useState('');
-  const [leaveEndDate, setLeaveEndDate] = useState('');
+  const [leaveStartDate, setLeaveStartDate] = useState<Date | null>(null);
+  const [leaveEndDate, setLeaveEndDate] = useState<Date | null>(null);
   const [leaveReason, setLeaveReason] = useState('');
   const [leaveXp, setLeaveXp] = useState('25');
   const [leaveComments, setLeaveComments] = useState('');
@@ -63,10 +64,17 @@ export default function ProfileScreen() {
   const handleApplyLeave = async () => {
     if (!profile?.id || !profile?.house_id) return;
 
-    if (!leaveDuration.trim()) {
-      const msg = 'Please enter leave duration (e.g. Nov 5 - Nov 10).';
+    if (!leaveStartDate || !leaveEndDate) {
+      const msg = 'Please select both start date and end date for your leave.';
       if (Platform.OS === 'web') alert(msg);
-      else Alert.alert('Required', msg);
+      else Alert.alert('Dates Required', msg);
+      return;
+    }
+
+    if (leaveEndDate < leaveStartDate) {
+      const msg = 'End date cannot be earlier than start date.';
+      if (Platform.OS === 'web') alert(msg);
+      else Alert.alert('Invalid Date Range', msg);
       return;
     }
 
@@ -77,24 +85,30 @@ export default function ProfileScreen() {
       return;
     }
 
+    // Auto-compute duration from mandatory dates
+    const startStr = leaveStartDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    const endStr = leaveEndDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    const diffTime = leaveEndDate.getTime() - leaveStartDate.getTime();
+    const diffDays = Math.max(1, Math.round(diffTime / (1000 * 60 * 60 * 24)) + 1);
+    const duration = `${startStr} - ${endStr} (${diffDays} day${diffDays > 1 ? 's' : ''})`;
+
     setSubmittingLeave(true);
     const res = await submitLeaveRequest({
       userId: profile.id,
       houseId: profile.house_id,
-      duration: leaveDuration,
-      startDate: leaveStartDate.trim() || undefined,
-      endDate: leaveEndDate.trim() || undefined,
-      reason: leaveReason,
+      duration,
+      startDate: leaveStartDate.toISOString().slice(0, 10),
+      endDate: leaveEndDate.toISOString().slice(0, 10),
+      reason: leaveReason.trim(),
       requestedXp: Math.max(0, parseInt(leaveXp, 10) || 0),
-      comments: leaveComments,
+      comments: leaveComments.trim(),
     });
     setSubmittingLeave(false);
 
     if (res.success) {
       setLeaveModalVisible(false);
-      setLeaveDuration('');
-      setLeaveStartDate('');
-      setLeaveEndDate('');
+      setLeaveStartDate(null);
+      setLeaveEndDate(null);
       setLeaveReason('');
       setLeaveComments('');
       const successMsg = 'Leave request submitted! It is now posted to the Live Feed. Once all roommates approve, your leave is granted and XP will be awarded.';
@@ -257,8 +271,11 @@ export default function ProfileScreen() {
       </View>
 
       {/* ─── Modal: Apply for Leave ─── */}
-      <Modal visible={leaveModalVisible} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
+      <Modal visible={leaveModalVisible} transparent animationType="slide" onRequestClose={() => setLeaveModalVisible(false)}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.modalOverlay}
+        >
           <View style={styles.modalCard}>
             <View style={styles.modalHeader}>
               <View style={styles.modalTitleRow}>
@@ -274,92 +291,109 @@ export default function ProfileScreen() {
               All roommates must approve your request in the Live Feed. Once approved, you'll be marked on leave in the leaderboard and awarded the requested XP.
             </Text>
 
-            {/* Leave Duration */}
-            <Text style={styles.inputLabel}>Leave Duration *</Text>
-            <TextInput
-              style={styles.modalInput}
-              placeholder="e.g. Nov 5 - Nov 10 (5 days)"
-              placeholderTextColor={COLORS.textLight}
-              value={leaveDuration}
-              onChangeText={setLeaveDuration}
-            />
-
-            {/* Dates (Optional Range) */}
-            <View style={styles.dateRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.inputLabelSmall}>Start Date (YYYY-MM-DD)</Text>
-                <TextInput
-                  style={styles.modalInputSmall}
-                  placeholder="2026-11-05"
-                  placeholderTextColor={COLORS.textLight}
-                  value={leaveStartDate}
-                  onChangeText={setLeaveStartDate}
-                />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.inputLabelSmall}>End Date (YYYY-MM-DD)</Text>
-                <TextInput
-                  style={styles.modalInputSmall}
-                  placeholder="2026-11-10"
-                  placeholderTextColor={COLORS.textLight}
-                  value={leaveEndDate}
-                  onChangeText={setLeaveEndDate}
-                />
-              </View>
-            </View>
-
-            {/* Reason for Leave */}
-            <Text style={styles.inputLabel}>Reason for Leave *</Text>
-            <TextInput
-              style={styles.modalInput}
-              placeholder="e.g. Visiting hometown / College exams"
-              placeholderTextColor={COLORS.textLight}
-              value={leaveReason}
-              onChangeText={setLeaveReason}
-            />
-
-            {/* Requesting XP Points */}
-            <Text style={styles.inputLabel}>Requesting XP Points</Text>
-            <TextInput
-              style={styles.modalInput}
-              placeholder="e.g. 25"
-              placeholderTextColor={COLORS.textLight}
-              keyboardType="number-pad"
-              value={leaveXp}
-              onChangeText={setLeaveXp}
-            />
-            <Text style={styles.helperText}>
-              XP points will be credited to you once all housemates approve.
-            </Text>
-
-            {/* Comments */}
-            <Text style={styles.inputLabel}>Comments / Note</Text>
-            <TextInput
-              style={[styles.modalInput, { height: 60, textAlignVertical: 'top' }]}
-              placeholder="e.g. Cleaned kitchen in advance; will resume chores on return"
-              placeholderTextColor={COLORS.textLight}
-              value={leaveComments}
-              onChangeText={setLeaveComments}
-              multiline
-            />
-
-            {/* Submit Button */}
-            <TouchableOpacity
-              style={[styles.submitLeaveBtn, submittingLeave && { opacity: 0.6 }]}
-              onPress={handleApplyLeave}
-              disabled={submittingLeave}
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={{ paddingBottom: 10 }}
             >
-              {submittingLeave ? (
-                <ActivityIndicator color="#FFF" size="small" />
-              ) : (
-                <>
-                  <Ionicons name="send" size={16} color="#FFF" />
-                  <Text style={styles.submitLeaveBtnText}>Submit Leave Request</Text>
-                </>
+              {/* Mandatory Start & End Dates with DatePicker */}
+              <View style={styles.dateRow}>
+                <View style={{ flex: 1 }}>
+                  <AppDatePicker
+                    label="Start Date"
+                    required
+                    value={leaveStartDate}
+                    minDate={new Date()}
+                    onChange={(date) => {
+                      setLeaveStartDate(date);
+                      if (!leaveEndDate || date > leaveEndDate) {
+                        setLeaveEndDate(date);
+                      }
+                    }}
+                    placeholder="Select start"
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <AppDatePicker
+                    label="End Date"
+                    required
+                    value={leaveEndDate}
+                    minDate={leaveStartDate || new Date()}
+                    onChange={(date) => setLeaveEndDate(date)}
+                    placeholder="Select end"
+                  />
+                </View>
+              </View>
+
+              {/* Calculated Duration Preview Badge */}
+              {leaveStartDate && leaveEndDate && (
+                <View style={styles.durationBadge}>
+                  <Ionicons name="time-outline" size={13} color="#0284C7" />
+                  <Text style={styles.durationBadgeText}>
+                    {(() => {
+                      const startStr = leaveStartDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                      const endStr = leaveEndDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                      const diffTime = leaveEndDate.getTime() - leaveStartDate.getTime();
+                      const diffDays = Math.max(1, Math.round(diffTime / (1000 * 60 * 60 * 24)) + 1);
+                      return `Duration: ${startStr} - ${endStr} (${diffDays} day${diffDays > 1 ? 's' : ''})`;
+                    })()}
+                  </Text>
+                </View>
               )}
-            </TouchableOpacity>
+
+              {/* Reason for Leave */}
+              <Text style={styles.inputLabel}>Reason for Leave *</Text>
+              <TextInput
+                style={styles.modalInput}
+                placeholder="e.g. Visiting hometown / College exams"
+                placeholderTextColor={COLORS.textLight}
+                value={leaveReason}
+                onChangeText={setLeaveReason}
+              />
+
+              {/* Requesting XP Points */}
+              <Text style={styles.inputLabel}>Requesting XP Points</Text>
+              <TextInput
+                style={styles.modalInput}
+                placeholder="e.g. 25"
+                placeholderTextColor={COLORS.textLight}
+                keyboardType="number-pad"
+                value={leaveXp}
+                onChangeText={setLeaveXp}
+              />
+              <Text style={styles.helperText}>
+                XP points will be credited to you once all housemates approve.
+              </Text>
+
+              {/* Comments */}
+              <Text style={styles.inputLabel}>Comments / Note</Text>
+              <TextInput
+                style={[styles.modalInput, { height: 60, textAlignVertical: 'top' }]}
+                placeholder="e.g. Cleaned kitchen in advance; will resume chores on return"
+                placeholderTextColor={COLORS.textLight}
+                value={leaveComments}
+                onChangeText={setLeaveComments}
+                multiline
+              />
+
+              {/* Submit Button */}
+              <TouchableOpacity
+                style={[styles.submitLeaveBtn, submittingLeave && { opacity: 0.6 }]}
+                onPress={handleApplyLeave}
+                disabled={submittingLeave}
+              >
+                {submittingLeave ? (
+                  <ActivityIndicator color="#FFF" size="small" />
+                ) : (
+                  <>
+                    <Ionicons name="send" size={16} color="#FFF" />
+                    <Text style={styles.submitLeaveBtnText}>Submit Leave Request</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </ScrollView>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* ─── Grocery List Modal ─── */}
@@ -477,7 +511,7 @@ const styles = StyleSheet.create({
 
   // Modal styles
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', padding: 14 },
-  modalCard: { backgroundColor: '#FFFFFF', borderRadius: RADIUS.md, padding: 16 },
+  modalCard: { backgroundColor: '#FFFFFF', borderRadius: RADIUS.md, padding: 16, maxHeight: '85%' },
   modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
   modalTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   modalTitle: { fontSize: 15, fontWeight: '800', color: '#1A1A24' },
@@ -494,7 +528,26 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#1A1A24',
   },
-  dateRow: { flexDirection: 'row', gap: 8, marginTop: 6 },
+  dateRow: { flexDirection: 'row', gap: 8, marginTop: 4, marginBottom: 4 },
+  durationBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#E0F2FE',
+    borderWidth: 1,
+    borderColor: '#BAE6FD',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    marginTop: 2,
+    marginBottom: 4,
+    alignSelf: 'flex-start',
+  },
+  durationBadgeText: {
+    fontSize: 10,
+    color: '#0369A1',
+    fontWeight: '700',
+  },
   modalInputSmall: {
     backgroundColor: '#F8FAFC',
     borderWidth: 1,

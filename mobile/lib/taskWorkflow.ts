@@ -89,8 +89,8 @@ export function isLogApproved(notesRaw: string | null | undefined): boolean {
  */
 export async function toggleTaskLogReaction(
   logId: string,
-  emoji: string,
-  userId: string
+  userId: string,
+  emoji: string
 ): Promise<{ success: boolean; reactions?: Record<string, string[]>; error?: string }> {
   try {
     const { data: log, error: logErr } = await supabaseAdmin
@@ -206,7 +206,7 @@ export async function verifyTaskLog(
 }
 
 /**
- * Add anonymous feedback to a task log.
+ * Add anonymous feedback to a task log (supports both chore logs and leave request logs).
  */
 export async function addAnonymousFeedback(
   logId: string,
@@ -223,7 +223,6 @@ export async function addAnonymousFeedback(
       return { success: false, error: 'Task log not found.' };
     }
 
-    const currentMeta = parseLogNotes(log.notes);
     const newFeedback = {
       id: Math.random().toString(36).slice(2, 9),
       text: feedbackText.trim(),
@@ -231,15 +230,20 @@ export async function addAnonymousFeedback(
       isAnonymous: true,
     };
 
-    const updatedFeedbacks = [...(currentMeta.feedbacks || []), newFeedback];
-    const updatedMeta: TaskLogMetadata = {
-      ...currentMeta,
-      feedbacks: updatedFeedbacks,
-    };
+    // Parse the existing notes — works for both chore logs and leave request logs
+    let parsed: any;
+    try {
+      parsed = JSON.parse(log.notes || '');
+    } catch {
+      parsed = { note: log.notes || '' };
+    }
+
+    const updatedFeedbacks = [...(Array.isArray(parsed.feedbacks) ? parsed.feedbacks : []), newFeedback];
+    const updatedNotes = JSON.stringify({ ...parsed, feedbacks: updatedFeedbacks });
 
     const { error: updateErr } = await supabaseAdmin
       .from('task_logs')
-      .update({ notes: encodeLogNotes(updatedMeta) })
+      .update({ notes: updatedNotes })
       .eq('id', logId);
 
     if (updateErr) {

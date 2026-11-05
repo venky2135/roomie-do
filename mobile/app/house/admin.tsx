@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   TextInput, Modal, Alert, Switch, RefreshControl, Platform,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { router } from 'expo-router';
 import { fetchTasks, upsertTask, toggleTask, regenerateCode, removeMember } from '../../lib/api';
@@ -234,9 +235,13 @@ export default function AdminScreen() {
       ))}
 
       {/* Task Edit Modal */}
-      <Modal visible={modalVisible} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <ScrollView style={styles.modalCard}>
+      <Modal visible={modalVisible} transparent animationType="slide" onRequestClose={() => setModalVisible(false)}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalOverlay}>
+          <ScrollView
+            style={styles.modalCard}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
             <Text style={styles.modalTitle}>{editTask?.id ? 'Edit Task' : 'Add Task'}</Text>
 
             <Text style={styles.label}>Task Name</Text>
@@ -304,7 +309,7 @@ export default function AdminScreen() {
               <Text style={styles.cancelText}>Cancel</Text>
             </TouchableOpacity>
           </ScrollView>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </ScrollView>
   );

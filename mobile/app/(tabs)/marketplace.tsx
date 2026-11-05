@@ -13,6 +13,7 @@ import {
   Image,
   ScrollView,
   Platform,
+  KeyboardAvoidingView,
 } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useAuthStore } from '../../store/useAuthStore';
@@ -353,8 +354,11 @@ export default function MarketplaceScreen() {
       )}
 
       {/* ─── Modal: Pick an Admin Task to Add to Marketplace ─── */}
-      <Modal visible={showAddModal} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
+      <Modal visible={showAddModal} transparent animationType="slide" onRequestClose={() => setShowAddModal(false)}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.modalOverlay}
+        >
           <View style={styles.modalBox}>
             <View style={styles.modalTopBar}>
               <Text style={styles.modalHead}>Add Task to Marketplace</Text>
@@ -364,8 +368,12 @@ export default function MarketplaceScreen() {
             </View>
             <Text style={styles.modalHint}>Choose from the tasks added by your house admin:</Text>
 
-            {/* List of Admin Task Templates */}
-            <ScrollView style={styles.templateList} showsVerticalScrollIndicator={false}>
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={{ paddingBottom: 16 }}
+            >
+              {/* List of Admin Task Templates */}
               {adminTemplates.length === 0 ? (
                 <View style={{ paddingVertical: 20, alignItems: 'center' }}>
                   <Ionicons name="clipboard-outline" size={24} color="#B0BEC5" />
@@ -374,74 +382,79 @@ export default function MarketplaceScreen() {
                   </Text>
                 </View>
               ) : (
-                adminTemplates.map((template) => {
-                  const isSelected = selectedTemplate?.id === template.id;
-                  return (
-                    <TouchableOpacity
-                      key={template.id}
-                      style={[styles.templateItem, isSelected && styles.templateItemSelected]}
-                      onPress={() => handleSelectTemplate(template)}
-                    >
-                      <View style={styles.templateIcon}>
-                        <AppIcon name={template.icon} category={template.category} size={18} color={COLORS.primary} />
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <Text style={[styles.templateName, isSelected && styles.templateNameSelected]}>
-                          {template.name}
-                        </Text>
-                        <Text style={styles.templateCat}>{template.category} · Base: {template.base_credits} XP</Text>
-                      </View>
-                      {isSelected ? (
-                        <Ionicons name="checkmark-circle" size={18} color={COLORS.primary} />
-                      ) : (
-                        <Ionicons name="chevron-forward" size={14} color="#B0BEC5" />
-                      )}
-                    </TouchableOpacity>
-                  );
-                })
-              )}
-            </ScrollView>
-
-            {/* Configuration for Selected Task */}
-            {selectedTemplate && (
-              <View style={styles.selectedConfigBox}>
-                <View style={styles.bountyRow}>
-                  <Text style={styles.fieldLabel}>XP Bounty:</Text>
-                  <TextInput
-                    style={styles.bountyInput}
-                    keyboardType="numeric"
-                    value={customBounty}
-                    onChangeText={setCustomBounty}
-                  />
-                  <Text style={styles.xpSuffix}>XP</Text>
+                <View style={{ marginBottom: 8 }}>
+                  {adminTemplates.map((template) => {
+                    const isSelected = selectedTemplate?.id === template.id;
+                    return (
+                      <TouchableOpacity
+                        key={template.id}
+                        style={[styles.templateItem, isSelected && styles.templateItemSelected]}
+                        onPress={() => handleSelectTemplate(template)}
+                      >
+                        <View style={styles.templateIcon}>
+                          <AppIcon name={template.icon} category={template.category} size={18} color={COLORS.primary} />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.templateName, isSelected && styles.templateNameSelected]}>
+                            {template.name}
+                          </Text>
+                          <Text style={styles.templateCat}>{template.category} · Base: {template.base_credits} XP</Text>
+                        </View>
+                        {isSelected ? (
+                          <Ionicons name="checkmark-circle" size={18} color={COLORS.primary} />
+                        ) : (
+                          <Ionicons name="chevron-forward" size={14} color="#B0BEC5" />
+                        )}
+                      </TouchableOpacity>
+                    );
+                  })}
                 </View>
+              )}
 
-                <TextInput
-                  style={styles.noteInput}
-                  placeholder="Optional note / instructions..."
-                  placeholderTextColor="#A0A0B0"
-                  value={taskNote}
-                  onChangeText={setTaskNote}
-                />
-              </View>
-            )}
+              {/* Configuration for Selected Task */}
+              {selectedTemplate && (
+                <View style={styles.selectedConfigBox}>
+                  <View style={styles.bountyRow}>
+                    <Text style={styles.fieldLabel}>XP Bounty:</Text>
+                    <TextInput
+                      style={styles.bountyInput}
+                      keyboardType="numeric"
+                      value={customBounty}
+                      onChangeText={setCustomBounty}
+                    />
+                    <Text style={styles.xpSuffix}>XP</Text>
+                  </View>
 
-            <TouchableOpacity
-              style={[styles.postSubmitBtn, (!selectedTemplate || addingTask) && { opacity: 0.5 }]}
-              onPress={handlePostFromAdminTask}
-              disabled={!selectedTemplate || addingTask}
-            >
-              <Text style={styles.postSubmitText}>
-                {addingTask ? 'Posting...' : selectedTemplate ? `Post "${selectedTemplate.name}"` : 'Select a Task Above'}
-              </Text>
-            </TouchableOpacity>
+                  <TextInput
+                    style={styles.noteInput}
+                    placeholder="Optional note / instructions..."
+                    placeholderTextColor="#A0A0B0"
+                    value={taskNote}
+                    onChangeText={setTaskNote}
+                  />
+                </View>
+              )}
+
+              <TouchableOpacity
+                style={[styles.postSubmitBtn, (!selectedTemplate || addingTask) && { opacity: 0.5 }]}
+                onPress={handlePostFromAdminTask}
+                disabled={!selectedTemplate || addingTask}
+              >
+                <Text style={styles.postSubmitText}>
+                  {addingTask ? 'Posting...' : selectedTemplate ? `Post "${selectedTemplate.name}"` : 'Select a Task Above'}
+                </Text>
+              </TouchableOpacity>
+            </ScrollView>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* ─── Modal: Submit Task Completion & Photo Proof ─── */}
-      <Modal visible={!!completingTask} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
+      <Modal visible={!!completingTask} transparent animationType="slide" onRequestClose={() => setCompletingTask(null)}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.modalOverlay}
+        >
           <View style={styles.modalBox}>
             <View style={styles.modalTopBar}>
               <Text style={styles.modalHead}>Complete Chore</Text>
@@ -450,50 +463,56 @@ export default function MarketplaceScreen() {
               </TouchableOpacity>
             </View>
 
-            <Text style={styles.taskTitleMini}>{completingTask?.title}</Text>
-            <Text style={styles.taskBountyMini}>Reward: +{completingTask?.bountyXp} XP upon verification</Text>
-
-            <TextInput
-              style={styles.noteInput}
-              placeholder="Add completion note (optional)..."
-              placeholderTextColor="#A0A0B0"
-              value={completeNotes}
-              onChangeText={setCompleteNotes}
-            />
-
-            {/* Photo Proof */}
-            <Text style={styles.fieldLabel}>Photo Proof:</Text>
-            {completePhotoUri ? (
-              <View style={styles.photoBox}>
-                <Image source={{ uri: completePhotoUri }} style={styles.photoImg} />
-                <TouchableOpacity style={styles.photoDel} onPress={() => setCompletePhotoUri(null)}>
-                  <Ionicons name="trash" size={14} color="#FFF" />
-                </TouchableOpacity>
-              </View>
-            ) : (
-              <View style={styles.photoBtns}>
-                <TouchableOpacity style={styles.photoBtn} onPress={() => handlePickPhoto(true)}>
-                  <Ionicons name="camera-outline" size={16} color={COLORS.primary} />
-                  <Text style={styles.photoBtnText}>Camera</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.photoBtn} onPress={() => handlePickPhoto(false)}>
-                  <Ionicons name="images-outline" size={16} color={COLORS.primary} />
-                  <Text style={styles.photoBtnText}>Gallery</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-
-            <TouchableOpacity
-              style={[styles.postSubmitBtn, submittingComplete && { opacity: 0.5 }]}
-              onPress={handleSubmitCompletion}
-              disabled={submittingComplete}
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={{ paddingBottom: 16 }}
             >
-              <Text style={styles.postSubmitText}>
-                {submittingComplete ? 'Submitting...' : 'Submit for Verification'}
-              </Text>
-            </TouchableOpacity>
+              <Text style={styles.taskTitleMini}>{completingTask?.title}</Text>
+              <Text style={styles.taskBountyMini}>Reward: +{completingTask?.bountyXp} XP upon verification</Text>
+
+              <TextInput
+                style={styles.noteInput}
+                placeholder="Add completion note (optional)..."
+                placeholderTextColor="#A0A0B0"
+                value={completeNotes}
+                onChangeText={setCompleteNotes}
+              />
+
+              {/* Photo Proof */}
+              <Text style={styles.fieldLabel}>Photo Proof:</Text>
+              {completePhotoUri ? (
+                <View style={styles.photoBox}>
+                  <Image source={{ uri: completePhotoUri }} style={styles.photoImg} />
+                  <TouchableOpacity style={styles.photoDel} onPress={() => setCompletePhotoUri(null)}>
+                    <Ionicons name="trash" size={14} color="#FFF" />
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <View style={styles.photoBtns}>
+                  <TouchableOpacity style={styles.photoBtn} onPress={() => handlePickPhoto(true)}>
+                    <Ionicons name="camera-outline" size={16} color={COLORS.primary} />
+                    <Text style={styles.photoBtnText}>Camera</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.photoBtn} onPress={() => handlePickPhoto(false)}>
+                    <Ionicons name="images-outline" size={16} color={COLORS.primary} />
+                    <Text style={styles.photoBtnText}>Gallery</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              <TouchableOpacity
+                style={[styles.postSubmitBtn, submittingComplete && { opacity: 0.5 }]}
+                onPress={handleSubmitCompletion}
+                disabled={submittingComplete}
+              >
+                <Text style={styles.postSubmitText}>
+                  {submittingComplete ? 'Submitting...' : 'Submit for Verification'}
+                </Text>
+              </TouchableOpacity>
+            </ScrollView>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );
