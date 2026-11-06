@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -102,11 +102,23 @@ export default function HomeScreen() {
     try {
       const { data: members } = await supabase
         .from('profiles')
-        .select('id, username, avatar_url, total_credits, xp, streak_days')
+        .select('id, username, avatar_url, total_credits, xp, streak_days, weekly_xp')
         .eq('house_id', profile.house_id);
 
       if (!members || members.length === 0) {
         setLeaderboard([]);
+        return;
+      }
+
+      if (p === 'week') {
+        const sorted = members
+          .map((m: any) => ({
+            ...m,
+            periodCredits: m.weekly_xp ?? 0,
+          }))
+          .sort((a, b) => b.periodCredits - a.periodCredits)
+          .map((m, i) => ({ ...m, rank: i + 1 }));
+        setLeaderboard(sorted);
         return;
       }
 
@@ -120,7 +132,7 @@ export default function HomeScreen() {
           }))
         );
       } else {
-        const days = p === 'week' ? 7 : 30;
+        const days = 30;
         const sinceDate = new Date();
         sinceDate.setDate(sinceDate.getDate() - days);
 

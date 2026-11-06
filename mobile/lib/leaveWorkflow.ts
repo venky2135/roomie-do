@@ -170,7 +170,7 @@ export async function approveLeaveRequest(params: {
     // 1. Fetch current log
     const { data: log, error: logErr } = await supabaseAdmin
       .from('task_logs')
-      .select('*, profiles(id, xp, total_credits, username)')
+      .select('*, profiles(id, xp, total_credits, weekly_xp, username)')
       .eq('id', params.logId)
       .single();
 
@@ -237,6 +237,7 @@ export async function approveLeaveRequest(params: {
             .update({
               xp: (requester.xp || 0) + currentMeta.requestedXp,
               total_credits: (requester.total_credits || 0) + currentMeta.requestedXp,
+              weekly_xp: (requester.weekly_xp || 0) + currentMeta.requestedXp,
               last_active_at: new Date().toISOString(),
             })
             .eq('id', requester.id);

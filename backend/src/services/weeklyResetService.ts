@@ -133,7 +133,7 @@ export class WeeklyResetService {
     // 2. Fetch all members in the house
     const { data: members, error: memErr } = await supabase
       .from('profiles')
-      .select('id, username, avatar_url, total_credits, xp')
+      .select('id, username, avatar_url, total_credits, xp, weekly_xp')
       .eq('house_id', houseId);
 
     if (memErr || !members || members.length === 0) {
@@ -171,12 +171,12 @@ export class WeeklyResetService {
 
     // 4. Calculate scores per member
     const scores: Record<string, WeeklyScoreMember> = {};
-    members.forEach((m) => {
+    members.forEach((m: any) => {
       scores[m.id] = {
         id: m.id,
         username: m.username,
         avatar_url: m.avatar_url,
-        credits: 0,
+        credits: m.weekly_xp || 0,
         choresCount: 0,
       };
     });
@@ -184,8 +184,11 @@ export class WeeklyResetService {
     let totalHouseCredits = 0;
     validLogs.forEach((l) => {
       if (scores[l.user_id]) {
-        scores[l.user_id].credits += l.credits_awarded || 0;
         scores[l.user_id].choresCount += 1;
+        // Fallback: if weekly_xp was not populated, add from task_logs
+        if (scores[l.user_id].credits === 0) {
+          scores[l.user_id].credits += l.credits_awarded || 0;
+        }
         totalHouseCredits += l.credits_awarded || 0;
       }
     });
@@ -252,7 +255,13 @@ export class WeeklyResetService {
       });
     }
 
-    // 8. Record in weekly_resets (prevents duplicate runs)
+    // 8. Reset weekly_xp to 0 on profiles for the fresh new week!
+    await supabase
+      .from('profiles')
+      .update({ weekly_xp: 0 })
+      .in('id', memberIds);
+
+    // 9. Record in weekly_resets (prevents duplicate runs)
     await supabase.from('weekly_resets').upsert(
       {
         house_id: houseId,

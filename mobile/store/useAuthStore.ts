@@ -9,6 +9,7 @@ export interface Profile {
   phone: string;
   avatar_url: string | null;
   total_credits: number;
+  weekly_xp?: number;
   level: number;
   xp: number;
   streak_days: number;

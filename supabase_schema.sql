@@ -20,6 +20,7 @@ CREATE TABLE profiles (
   phone          TEXT,
   avatar_url     TEXT,
   total_credits  INT DEFAULT 0,
+  weekly_xp      INT DEFAULT 0,
   level          INT DEFAULT 1,
   xp             INT DEFAULT 0,
   streak_days    INT DEFAULT 0,

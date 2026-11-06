@@ -23,10 +23,18 @@ router.get('/:houseId', authMiddleware_1.authMiddleware, async (req, res) => {
     // Get members
     const { data: members } = await supabaseClient_1.supabase
         .from('profiles')
-        .select('id, username, avatar_url, total_credits, xp, level, streak_days')
+        .select('id, username, avatar_url, total_credits, xp, level, streak_days, weekly_xp')
         .eq('house_id', houseId);
     if (!members) {
         res.json({ leaderboard: [] });
+        return;
+    }
+    if (period === 'week') {
+        // Weekly: use dedicated weekly_xp column from profile
+        const sorted = [...members]
+            .sort((a, b) => (b.weekly_xp ?? 0) - (a.weekly_xp ?? 0))
+            .map((m, i) => ({ ...m, rank: i + 1, periodCredits: m.weekly_xp ?? 0 }));
+        res.json({ leaderboard: sorted });
         return;
     }
     if (period === 'all') {

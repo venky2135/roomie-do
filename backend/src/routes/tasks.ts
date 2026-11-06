@@ -122,7 +122,7 @@ router.post('/verify/:logId', authMiddleware, async (req: AuthRequest, res: Resp
 
   const { data: creator } = await supabase
     .from('profiles')
-    .select('house_id, xp, total_credits')
+    .select('house_id, xp, total_credits, weekly_xp')
     .eq('id', log.user_id)
     .single();
 
@@ -157,6 +157,7 @@ router.post('/verify/:logId', authMiddleware, async (req: AuthRequest, res: Resp
   const award = log.credits_awarded || 20;
   const newXp = (creator.xp || 0) + award;
   const newTotal = (creator.total_credits || 0) + award;
+  const newWeeklyXp = (creator.weekly_xp || 0) + award;
   const newLevel = Math.floor(newXp / 500) + 1;
 
   await supabase
@@ -164,6 +165,7 @@ router.post('/verify/:logId', authMiddleware, async (req: AuthRequest, res: Resp
     .update({
       xp: newXp,
       total_credits: newTotal,
+      weekly_xp: newWeeklyXp,
       level: newLevel,
       last_active_at: new Date().toISOString(),
     })

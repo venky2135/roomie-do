@@ -22,8 +22,8 @@ export const startWeeklyCron = () => {
       await NotificationQueueService.flushQueue();
 
       const now = new Date();
-      // If today is Sunday (0), check and run any unannounced weekly resets
-      if (now.getUTCDay() === 0) {
+      // If today is Sunday (0) or Monday (1), check and run any unannounced weekly resets
+      if (now.getUTCDay() === 0 || now.getUTCDay() === 1) {
         await WeeklyResetService.checkAndRunAllPendingWeeklyResets();
       }
     } catch (e) {

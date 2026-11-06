@@ -395,8 +395,8 @@ router.get('/catchup', async (_req, res: Response): Promise<void> => {
 
     const now = new Date();
     let weeklyRan = false;
-    // If today is Sunday (0), check and run any unannounced weekly resets
-    if (now.getUTCDay() === 0) {
+    // If today is Sunday (0) or Monday (1), check and run any unannounced weekly resets
+    if (now.getUTCDay() === 0 || now.getUTCDay() === 1) {
       await WeeklyResetService.checkAndRunAllPendingWeeklyResets();
       weeklyRan = true;
     }
