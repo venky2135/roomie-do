@@ -1,9 +1,11 @@
 import React, { useEffect } from 'react';
+import { AppState, AppStateStatus } from 'react-native';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { supabase } from '../lib/supabase';
 import { useAuthStore } from '../store/useAuthStore';
 import { registerForPushNotificationsAsync, setupNotificationListeners } from '../lib/notifications';
+import { triggerCatchup } from '../lib/api';
 
 export default function RootLayout() {
   const { session, profile, initialized, setSession, fetchProfile, setInitialized } = useAuthStore();
@@ -16,6 +18,19 @@ export default function RootLayout() {
     return () => {
       unsubscribe();
     };
+  }, []);
+
+  // Catchup on server sleep / background resumes: flushes queues and triggers Sunday reset
+  useEffect(() => {
+    triggerCatchup().catch(() => {});
+
+    const sub = AppState.addEventListener('change', (state: AppStateStatus) => {
+      if (state === 'active') {
+        triggerCatchup().catch(() => {});
+      }
+    });
+
+    return () => sub.remove();
   }, []);
 
   // Register device FCM token whenever a valid user session is active

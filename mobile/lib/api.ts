@@ -141,5 +141,11 @@ export const notifyMarketplaceClaimed = (payload: {
 export const triggerZomatoNudge = (houseOnly = true) =>
   api.post('/api/notifications/zomato-nudge', { houseOnly });
 
+export const triggerCatchup = () =>
+  api.get('/api/notifications/catchup');
+
+export const triggerSundayReset = (houseId?: string, force = true) =>
+  api.post('/api/notifications/sunday-reset', { houseId, force });
+
 export default api;
 

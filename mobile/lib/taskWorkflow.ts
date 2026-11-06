@@ -470,3 +470,44 @@ export async function completeMarketplaceTask(
     return { success: false, error: err.message };
   }
 }
+
+
+// ─── Weekly Sunday Announcement Metadata ──────────────────────
+export interface WeeklyAnnouncementMetadata {
+  type: 'weekly_announcement';
+  weekKey: string;
+  winner: {
+    id: string;
+    username: string;
+    avatarUrl: string;
+    credits: number;
+    choresCount: number;
+    prize?: string;
+    bonusAwarded?: number;
+  };
+  loser: {
+    id: string;
+    username: string;
+    avatarUrl: string;
+    credits: number;
+    choresCount: number;
+    penalty: string;
+  };
+  houseStats: {
+    totalChores: number;
+    totalCredits: number;
+    membersCount: number;
+  };
+  announcedAt: string;
+}
+
+export function parseWeeklyAnnouncementMetadata(notesRaw: string | null | undefined): WeeklyAnnouncementMetadata | null {
+  if (!notesRaw) return null;
+  try {
+    const parsed = JSON.parse(notesRaw);
+    if (parsed && typeof parsed === 'object' && parsed.type === 'weekly_announcement') {
+      return parsed as WeeklyAnnouncementMetadata;
+    }
+  } catch {}
+  return null;
+}

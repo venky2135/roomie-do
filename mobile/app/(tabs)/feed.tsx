@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -28,6 +28,7 @@ import {
   addAnonymousFeedback,
   toggleTaskLogReaction,
   TaskLogMetadata,
+  parseWeeklyAnnouncementMetadata,
 } from '../../lib/taskWorkflow';
 import {
   parseLeaveMetadata,
@@ -671,6 +672,8 @@ export default function FeedScreen() {
             );
           }
 
+
+
                     // Check if item is a Leave Request
           const leaveMeta = parseLeaveMetadata(item.notes);
 
@@ -811,6 +814,104 @@ export default function FeedScreen() {
                   <Text style={styles.anonActionText}>Feedback</Text>
                 </TouchableOpacity>
               </View>
+              </View>
+            );
+          }
+
+
+
+          // Check if item is a Sunday Weekly Announcement
+          const weeklyMeta = parseWeeklyAnnouncementMetadata(item.notes);
+
+          if (weeklyMeta) {
+            const isWinner = weeklyMeta.winner?.id === profile?.id;
+            const isLoser = weeklyMeta.loser?.id === profile?.id;
+
+            return (
+              <View style={[styles.card, styles.sundayCard]}>
+                {/* Header */}
+                <View style={styles.sundayHeader}>
+                  <View style={styles.sundayTrophyCircle}>
+                    <Text style={{ fontSize: 22 }}>🏆</Text>
+                  </View>
+                  <View style={styles.sundayHeaderInfo}>
+                    <View style={styles.sundayTagRow}>
+                      <Text style={styles.sundayTitle}>Sunday Awards Ceremony</Text>
+                      <View style={styles.sundayTag}>
+                        <Text style={styles.sundayTagText}>WEEKLY RESET</Text>
+                      </View>
+                    </View>
+                    <Text style={styles.sundayTime}>{timeAgo(item.completed_at)}</Text>
+                  </View>
+                </View>
+
+                {/* Banner */}
+                <View style={styles.sundayBanner}>
+                  <Text style={styles.sundayBannerText}>
+                    Week {weeklyMeta.weekKey} has wrapped up! Here are your house results:
+                  </Text>
+                </View>
+
+                {/* 1. Champion / Winner Box */}
+                <View style={[styles.ceremonyBox, styles.winnerBox]}>
+                  <View style={styles.ceremonyRoleRow}>
+                    <View style={styles.ceremonyBadgeWinner}>
+                      <Text style={styles.ceremonyBadgeText}>👑 HOUSE CHAMPION</Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.ceremonyUserRow}>
+                    <Text style={styles.ceremonyAvatar}>{weeklyMeta.winner?.avatarUrl || '👑'}</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.ceremonyUsername}>
+                        @{weeklyMeta.winner?.username} {isWinner && <Text style={{ color: '#D97706' }}>(You! 🎉)</Text>}
+                      </Text>
+                      <Text style={styles.ceremonyStats}>
+                        Earned {weeklyMeta.winner?.credits} XP • {weeklyMeta.winner?.choresCount} chores completed
+                      </Text>
+                    </View>
+                  </View>
+
+                  {/* Winner Prize Banner from Homescreen Stakes */}
+                  <View style={styles.prizeRow}>
+                    <Ionicons name="gift" size={13} color="#D97706" />
+                    <Text style={styles.prizeText}>Prize: {weeklyMeta.winner?.prize || 'Weekend takeout dinner 🍕'}</Text>
+                  </View>
+                </View>
+
+                {/* 2. Slacker / Loser Box */}
+                <View style={[styles.ceremonyBox, styles.loserBox]}>
+                  <View style={styles.ceremonyRoleRow}>
+                    <View style={styles.ceremonyBadgeLoser}>
+                      <Text style={styles.ceremonyBadgeTextLoser}>🧽 CHORE SLACKER</Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.ceremonyUserRow}>
+                    <Text style={styles.ceremonyAvatar}>{weeklyMeta.loser?.avatarUrl || '🧑'}</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.ceremonyUsername}>
+                        @{weeklyMeta.loser?.username} {isLoser && <Text style={{ color: '#E11D48' }}>(You! 😅)</Text>}
+                      </Text>
+                      <Text style={styles.ceremonyStats}>
+                        Earned {weeklyMeta.loser?.credits} XP • {weeklyMeta.loser?.choresCount} chores completed
+                      </Text>
+                    </View>
+                  </View>
+
+                  {/* Fun Penalty Banner */}
+                  <View style={styles.penaltyRow}>
+                    <Ionicons name="alert-circle" size={13} color="#E11D48" />
+                    <Text style={styles.penaltyText}>Penalty: {weeklyMeta.loser?.penalty}</Text>
+                  </View>
+                </View>
+
+                {/* 3. House Stats Footer */}
+                <View style={styles.sundayFooter}>
+                  <Text style={styles.sundayFooterText}>
+                    🏡 House Total: {weeklyMeta.houseStats?.totalChores || 0} chores finished ({weeklyMeta.houseStats?.totalCredits || 0} total XP)
+                  </Text>
+                </View>
               </View>
             );
           }
@@ -1690,5 +1791,179 @@ const styles = StyleSheet.create({
     fontSize: 9.5,
     fontWeight: '700',
     color: '#475569',
+  },
+  sundayCard: {
+    borderColor: '#F59E0B',
+    borderWidth: 1.5,
+    backgroundColor: '#FFFDF7',
+    padding: 14,
+  },
+  sundayHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  sundayTrophyCircle: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: '#FEF3C7',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  sundayHeaderInfo: {
+    flex: 1,
+  },
+  sundayTagRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  sundayTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#1E293B',
+  },
+  sundayTag: {
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 7,
+    paddingVertical: 2.5,
+    borderRadius: 6,
+  },
+  sundayTagText: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#D97706',
+  },
+  sundayTime: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  sundayBanner: {
+    backgroundColor: '#FEF9C3',
+    padding: 8,
+    borderRadius: 8,
+    marginBottom: 10,
+  },
+  sundayBannerText: {
+    fontSize: 12,
+    color: '#854D0E',
+    fontWeight: '600',
+  },
+  ceremonyBox: {
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 10,
+  },
+  winnerBox: {
+    backgroundColor: '#FEF3C7',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  },
+  loserBox: {
+    backgroundColor: '#FFF1F2',
+    borderWidth: 1,
+    borderColor: '#FECDD3',
+  },
+  ceremonyRoleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  ceremonyBadgeWinner: {
+    backgroundColor: '#F59E0B',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  ceremonyBadgeLoser: {
+    backgroundColor: '#E11D48',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  ceremonyBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#FFF',
+  },
+  ceremonyBadgeTextLoser: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#FFF',
+  },
+  bonusXpPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: '#FFF',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  bonusXpText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#D97706',
+  },
+  ceremonyUserRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  ceremonyAvatar: {
+    fontSize: 24,
+  },
+  ceremonyUsername: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  ceremonyStats: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  prizeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 8,
+    paddingTop: 6,
+    borderTopWidth: 1,
+    borderTopColor: '#FDE68A',
+  },
+  prizeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#B45309',
+  },
+  penaltyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 8,
+    paddingTop: 6,
+    borderTopWidth: 1,
+    borderTopColor: '#FECDD3',
+  },
+  penaltyText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#BE123C',
+  },
+  sundayFooter: {
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#FDE68A',
+    alignItems: 'center',
+  },
+  sundayFooterText: {
+    fontSize: 12,
+    color: '#78350F',
+    fontWeight: '600',
   },
 });

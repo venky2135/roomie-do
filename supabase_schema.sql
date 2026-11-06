@@ -290,3 +290,36 @@ CREATE POLICY "grocery_items_delete" ON grocery_items FOR DELETE
 
 -- Enable realtime for live cross-roommate sync
 ALTER PUBLICATION supabase_realtime ADD TABLE grocery_items;
+
+
+-- ============================================================
+-- WEEKLY RESETS & NOTIFICATION QUEUE (Render resilient)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS weekly_resets (
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  house_id       UUID NOT NULL REFERENCES houses(id) ON DELETE CASCADE,
+  week_key       TEXT NOT NULL,
+  winner_id      UUID REFERENCES profiles(id) ON DELETE SET NULL,
+  loser_id       UUID REFERENCES profiles(id) ON DELETE SET NULL,
+  winner_credits INT DEFAULT 0,
+  loser_credits  INT DEFAULT 0,
+  details        JSONB DEFAULT '{}'::jsonb,
+  announced_at   TIMESTAMPTZ DEFAULT NOW(),
+  created_at     TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(house_id, week_key)
+);
+
+CREATE TABLE IF NOT EXISTS notification_queue (
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  house_id       UUID REFERENCES houses(id) ON DELETE CASCADE,
+  user_id        UUID REFERENCES profiles(id) ON DELETE CASCADE,
+  title          TEXT NOT NULL,
+  body           TEXT NOT NULL,
+  data           JSONB DEFAULT '{}'::jsonb,
+  status         TEXT DEFAULT 'pending',
+  scheduled_for  TIMESTAMPTZ DEFAULT NOW(),
+  sent_at        TIMESTAMPTZ,
+  attempts       INT DEFAULT 0,
+  error_message  TEXT,
+  created_at     TIMESTAMPTZ DEFAULT NOW()
+);

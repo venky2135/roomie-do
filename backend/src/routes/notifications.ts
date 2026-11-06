@@ -1,6 +1,8 @@
 import { Router, Response } from 'express';
 import { authMiddleware, AuthRequest } from '../middleware/authMiddleware';
 import { NotificationService } from '../services/notificationService';
+import { NotificationQueueService } from '../services/notificationQueueService';
+import { WeeklyResetService } from '../services/weeklyResetService';
 import { ZomatoNotificationService } from '../services/zomatoNotificationService';
 import { supabase } from '../supabaseClient';
 
@@ -383,6 +385,66 @@ router.post('/test', authMiddleware, async (req: AuthRequest, res: Response): Pr
     res.json({ success: true, result });
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Failed to send test notification' });
+  }
+});
+
+// GET /api/notifications/catchup — Flushes queued notifications & performs Sunday catch-up
+router.get('/catchup', async (_req, res: Response): Promise<void> => {
+  try {
+    const queueResult = await NotificationQueueService.flushQueue();
+
+    const now = new Date();
+    let weeklyRan = false;
+    // If today is Sunday (0), check and run any unannounced weekly resets
+    if (now.getUTCDay() === 0) {
+      await WeeklyResetService.checkAndRunAllPendingWeeklyResets();
+      weeklyRan = true;
+    }
+
+    res.json({
+      success: true,
+      message: 'Catch-up executed successfully',
+      queue: queueResult,
+      weeklyResetChecked: weeklyRan,
+    });
+  } catch (err: any) {
+    console.error('Catch-up error:', err);
+    res.status(500).json({ error: err.message || 'Failed to execute catch-up' });
+  }
+});
+
+// POST /api/notifications/sunday-reset — Trigger Sunday calculation (immediate / test)
+router.post('/sunday-reset', authMiddleware, async (req: AuthRequest, res: Response): Promise<void> => {
+  const userId = req.userId!;
+  const { houseId: targetHouseId, force = true } = req.body;
+
+  try {
+    let houseId = targetHouseId;
+    if (!houseId) {
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('house_id')
+        .eq('id', userId)
+        .single();
+      houseId = profile?.house_id;
+    }
+
+    if (!houseId) {
+      res.status(400).json({ error: 'houseId could not be determined' });
+      return;
+    }
+
+    const result = await WeeklyResetService.runWeeklyResetForHouse(houseId, force);
+    await NotificationQueueService.flushQueue();
+
+    res.json({
+      success: true,
+      result,
+      message: `Sunday reset completed for house: ${houseId}`,
+    });
+  } catch (err: any) {
+    console.error('Failed to run Sunday reset:', err);
+    res.status(500).json({ error: err.message || 'Failed to run Sunday reset' });
   }
 });
 

@@ -170,6 +170,7 @@ router.get('/:houseId', authMiddleware_1.authMiddleware, async (req, res) => {
         .neq('category', 'Marketplace')
         .neq('category', 'Leave')
         .neq('category', 'WeeklyStakes')
+        .neq('category', 'Complaint')
         .order('category');
     if (error) {
         res.status(500).json({ error: error.message });

@@ -288,9 +288,16 @@ export async function deleteLeaveRequest(
  * for the current period or today.
  * Returns array of user IDs on leave.
  */
+/**
+ * Fetch housemates who are CURRENTLY on approved active leave today.
+ * A leave is active if and only if:
+ * 1. The leave request is approved (status === 'approved').
+ * 2. Today's date is between startDate and endDate (inclusive).
+ * Once the leave endDate has passed, the user is no longer on leave.
+ */
 export async function fetchActiveLeaves(
   houseId: string,
-  period: 'week' | 'month' | 'all' = 'week'
+  _period: 'week' | 'month' | 'all' = 'week'
 ): Promise<string[]> {
   try {
     const { data: memberProfiles } = await supabaseAdmin
@@ -314,51 +321,34 @@ export async function fetchActiveLeaves(
     const today = new Date();
     const todayStr = toLocalDateString(today);
 
-    // Compute period start date string for ranking chart range
-    let periodStartStr: string | null = null;
-    if (period === 'week') {
-      const d = new Date(today);
-      d.setDate(d.getDate() - 7);
-      periodStartStr = toLocalDateString(d);
-    } else if (period === 'month') {
-      const d = new Date(today);
-      d.setDate(d.getDate() - 30);
-      periodStartStr = toLocalDateString(d);
-    }
-
     const onLeaveUserIds = new Set<string>();
 
     for (const log of logs) {
       const meta = parseLeaveMetadata(log.notes);
-      // Anyone who applied for leave (pending or approved, not rejected)
-      if (meta && meta.status !== 'rejected') {
+      // Only approved leave requests mark a user as currently on leave
+      if (meta && meta.status === 'approved') {
         const normStart = normalizeDateString(meta.startDate);
-        const normEnd = normalizeDateString(meta.endDate);
+        let normEnd = normalizeDateString(meta.endDate);
+
+        // If endDate is missing, calculate from duration
+        if (normStart && !normEnd && meta.duration) {
+          const days = parseInt(meta.duration, 10);
+          if (!isNaN(days) && days > 0) {
+            const startD = new Date(normStart + 'T00:00:00');
+            startD.setDate(startD.getDate() + (days - 1));
+            normEnd = toLocalDateString(startD);
+          }
+        }
 
         if (normStart && normEnd) {
-          // Check if active today
-          const isActiveToday = todayStr >= normStart && todayStr <= normEnd;
-
-          // Check if overlaps with the selected ranking period
-          let overlapsPeriod = false;
-          if (period === 'all') {
-            overlapsPeriod = isActiveToday || true;
-          } else if (periodStartStr) {
-            overlapsPeriod = normStart <= todayStr && normEnd >= periodStartStr;
-          }
-
-          if (isActiveToday || overlapsPeriod) {
+          // A user is on leave if and only if today falls within [startDate, endDate]
+          const isCurrentlyActiveToday = todayStr >= normStart && todayStr <= normEnd;
+          if (isCurrentlyActiveToday) {
             onLeaveUserIds.add(log.user_id);
           }
         } else if (normStart) {
-          if (todayStr >= normStart) {
-            onLeaveUserIds.add(log.user_id);
-          }
-        } else {
-          // Fallback: check if submitted within last 7 days as active leave
-          const completedTime = log.completed_at ? new Date(log.completed_at).getTime() : 0;
-          const diffDays = (Date.now() - completedTime) / (1000 * 60 * 60 * 24);
-          if (diffDays <= 7) {
+          // Single day leave: active only on that exact day
+          if (todayStr === normStart) {
             onLeaveUserIds.add(log.user_id);
           }
         }
