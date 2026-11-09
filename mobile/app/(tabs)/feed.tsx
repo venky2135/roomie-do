@@ -93,7 +93,19 @@ export default function FeedScreen() {
         .order('completed_at', { ascending: false })
         .limit(50);
 
-      setFeed((data as FeedItem[]) ?? []);
+      const rawLogs = (data as FeedItem[]) ?? [];
+      // Deduplicate: ensure only 1 Sunday Awards Ceremony card per weekKey is shown in the feed
+      const seenWeeks = new Set<string>();
+      const dedupedLogs = rawLogs.filter((item) => {
+        const weeklyMeta = parseWeeklyAnnouncementMetadata(item.notes);
+        if (weeklyMeta?.weekKey) {
+          if (seenWeeks.has(weeklyMeta.weekKey)) return false;
+          seenWeeks.add(weeklyMeta.weekKey);
+        }
+        return true;
+      });
+
+      setFeed(dedupedLogs);
     } catch (_) {}
   }, [profile?.house_id]);
 

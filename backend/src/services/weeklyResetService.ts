@@ -20,6 +20,18 @@ const DEFAULT_STAKES: HouseWeeklyStakes = {
 };
 
 export class WeeklyResetService {
+  private static activeResets = new Set<string>();
+
+  /**
+   * Checks whether the current time is Sunday in IST (UTC+5:30).
+   * Sunday Ceremony MUST strictly run on Sunday and never spill over to Monday.
+   */
+  static isSundayIST(d: Date = new Date()): boolean {
+    const istTime = d.getTime() + 5.5 * 3600 * 1000;
+    const istDate = new Date(istTime);
+    return istDate.getUTCDay() === 0;
+  }
+
   /**
    * Generates a week key for a given date, e.g., '2026-W45'.
    */
@@ -116,35 +128,64 @@ export class WeeklyResetService {
     houseId: string,
     force = false
   ): Promise<{ success: boolean; alreadyRan?: boolean; winner?: string; loser?: string; bounty?: string; penalty?: string }> {
-    const weekKey = this.getWeekKey();
-
-    // 1. Check if already calculated for this house and week
-    const { data: existingReset } = await supabase
-      .from('weekly_resets')
-      .select('id')
-      .eq('house_id', houseId)
-      .eq('week_key', weekKey)
-      .maybeSingle();
-
-    if (existingReset && !force) {
+    // 0. Strict day check: Sunday ceremony must ONLY run on Sunday (IST), unless explicitly forced by admin testing
+    if (!this.isSundayIST() && !force) {
+      console.log(`[WeeklyReset] Skipping reset for house ${houseId} - today is not Sunday (IST).`);
       return { success: true, alreadyRan: true };
     }
 
-    // 2. Fetch all members in the house
-    const { data: members, error: memErr } = await supabase
-      .from('profiles')
-      .select('id, username, avatar_url, total_credits, xp, weekly_xp')
-      .eq('house_id', houseId);
+    const weekKey = this.getWeekKey();
+    const lockKey = `${houseId}:${weekKey}`;
 
-    if (memErr || !members || members.length === 0) {
-      return { success: false };
+    // Concurrency guard: avoid duplicate concurrent executions
+    if (this.activeResets.has(lockKey)) {
+      console.log(`[WeeklyReset] Reset already running for ${lockKey}, skipping duplicate call.`);
+      return { success: true, alreadyRan: true };
     }
 
-    const memberIds = members.map((m) => m.id);
+    this.activeResets.add(lockKey);
 
-    // 3. Query approved task logs for the last 7 days
-    const weekAgo = new Date();
-    weekAgo.setDate(weekAgo.getDate() - 7);
+    try {
+      // 1. Check if already calculated for this house and week in weekly_resets
+      const { data: existingReset } = await supabase
+        .from('weekly_resets')
+        .select('id')
+        .eq('house_id', houseId)
+        .eq('week_key', weekKey)
+        .maybeSingle();
+
+      if (existingReset && !force) {
+        return { success: true, alreadyRan: true };
+      }
+
+      // 2. Fetch all members in the house
+      const { data: members, error: memErr } = await supabase
+        .from('profiles')
+        .select('id, username, avatar_url, total_credits, xp, weekly_xp')
+        .eq('house_id', houseId);
+
+      if (memErr || !members || members.length === 0) {
+        return { success: false };
+      }
+
+      const memberIds = members.map((m) => m.id);
+
+      // Check if an announcement for this weekKey already exists in task_logs (defensive check)
+      const { data: existingAnnouncements } = await supabase
+        .from('task_logs')
+        .select('id')
+        .in('user_id', memberIds)
+        .ilike('notes', `%"weekKey":"${weekKey}"%`)
+        .limit(1);
+
+      if (existingAnnouncements && existingAnnouncements.length > 0 && !force) {
+        console.log(`[WeeklyReset] Task log announcement for ${weekKey} already exists. Skipping.`);
+        return { success: true, alreadyRan: true };
+      }
+
+      // 3. Query approved task logs for the last 7 days
+      const weekAgo = new Date();
+      weekAgo.setDate(weekAgo.getDate() - 7);
 
     const { data: logs } = await supabase
       .from('task_logs')
@@ -307,6 +348,9 @@ export class WeeklyResetService {
       bounty: stakes.bounty,
       penalty: stakes.penalty,
     };
+    } finally {
+      this.activeResets.delete(lockKey);
+    }
   }
 
   /**

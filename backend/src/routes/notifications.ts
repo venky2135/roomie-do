@@ -393,10 +393,9 @@ router.get('/catchup', async (_req, res: Response): Promise<void> => {
   try {
     const queueResult = await NotificationQueueService.flushQueue();
 
-    const now = new Date();
     let weeklyRan = false;
-    // If today is Sunday (0) or Monday (1), check and run any unannounced weekly resets
-    if (now.getUTCDay() === 0 || now.getUTCDay() === 1) {
+    // STRICT CHECK: Weekly reset ONLY runs on Sunday (IST). Never on Monday or other days.
+    if (WeeklyResetService.isSundayIST()) {
       await WeeklyResetService.checkAndRunAllPendingWeeklyResets();
       weeklyRan = true;
     }

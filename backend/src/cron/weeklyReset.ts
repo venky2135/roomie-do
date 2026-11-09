@@ -18,12 +18,12 @@ export const startWeeklyCron = () => {
   // Catch-up check immediately when server boots up / resumes from sleep
   setTimeout(async () => {
     try {
-      console.log('🔄 Server wake-up: Flushing pending notifications & checking weekly resets...');
+      console.log('🔄 Server wake-up: Flushing pending notifications...');
       await NotificationQueueService.flushQueue();
 
-      const now = new Date();
-      // If today is Sunday (0) or Monday (1), check and run any unannounced weekly resets
-      if (now.getUTCDay() === 0 || now.getUTCDay() === 1) {
+      // STRICT CHECK: Weekly reset ONLY runs on Sunday (IST). Never on Monday or other days.
+      if (WeeklyResetService.isSundayIST()) {
+        console.log('🏆 Server wake-up on Sunday: Checking pending weekly resets...');
         await WeeklyResetService.checkAndRunAllPendingWeeklyResets();
       }
     } catch (e) {
@@ -31,5 +31,5 @@ export const startWeeklyCron = () => {
     }
   }, 3000);
 
-  console.log('📅 Weekly reset & queue system active (Every Sunday 8AM IST + Wake-up Catch-up)');
+  console.log('📅 Weekly reset & queue system active (Every Sunday 8AM IST + Sunday Wake-up Catch-up)');
 };
