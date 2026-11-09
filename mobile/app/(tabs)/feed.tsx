@@ -334,7 +334,7 @@ export default function FeedScreen() {
 
       if (res.success) {
         if (res.isUpheld) {
-          const msg = `Complaint upheld! ${meta.accusedUsername} has received a -10 streaks penalty.`;
+          const msg = `Complaint upheld! ${meta.accusedUsername} has received -10 streaks and -10 XP penalty.`;
           if (Platform.OS === 'web') alert(msg);
           else Alert.alert('Complaint Upheld! ⚠️', msg);
         } else {
@@ -356,14 +356,14 @@ export default function FeedScreen() {
       const confirmed =
         typeof window !== 'undefined'
           ? window.confirm(
-              `Upvote this complaint? If required upvotes are reached, ${meta.accusedUsername} will lose 10 streaks.`
+              `Upvote this complaint? If required upvotes are reached, ${meta.accusedUsername} will lose 10 streaks and 10 XP.`
             )
           : true;
       if (confirmed) await doUpvote();
     } else {
       Alert.alert(
         'Upvote Complaint',
-        `Upvote this complaint? If corroborated by roommates, ${meta.accusedUsername} will receive a -10 streaks penalty.`,
+        `Upvote this complaint? If corroborated by roommates, ${meta.accusedUsername} will receive -10 streaks and -10 XP penalty.`,
         [
           { text: 'Cancel', style: 'cancel' },
           { text: 'Upvote 👍', onPress: doUpvote },
@@ -546,7 +546,7 @@ export default function FeedScreen() {
                   <View style={[styles.complaintPenaltyBadge, isUpheld && styles.complaintPenaltyBadgeUpheld]}>
                     <Ionicons name="flame" size={11} color={isUpheld ? '#DC2626' : '#E11D48'} />
                     <Text style={[styles.complaintPenaltyText, isUpheld && { color: '#DC2626' }]}>
-                      {isUpheld ? '-10 Streaks' : '-10 Streak Risk'}
+                      {isUpheld ? '-10 Streaks & XP' : '-10 Streaks & XP Risk'}
                     </Text>
                   </View>
                 </View>
@@ -577,7 +577,7 @@ export default function FeedScreen() {
                   <View style={styles.complaintUpheldBanner}>
                     <Ionicons name="checkmark-circle" size={14} color="#DC2626" />
                     <Text style={styles.complaintUpheldBannerText}>
-                      Upheld by roommates. -10 streaks penalty applied to @{complaintMeta.accusedUsername}.
+                      Upheld by roommates. -10 streaks & -10 XP penalty applied to @{complaintMeta.accusedUsername}.
                     </Text>
                   </View>
                 ) : (

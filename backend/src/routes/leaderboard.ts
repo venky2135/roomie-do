@@ -24,7 +24,7 @@ router.get('/:houseId', authMiddleware, async (req: AuthRequest, res: Response):
   // Get members
   const { data: members } = await supabase
     .from('profiles')
-    .select('id, username, avatar_url, total_credits, xp, level, streak_days, weekly_xp')
+    .select('id, username, avatar_url, total_credits, xp, level, streak_days, weekly_xp, created_at')
     .eq('house_id', houseId);
 
   if (!members) {
@@ -89,8 +89,36 @@ router.get('/:houseId', authMiddleware, async (req: AuthRequest, res: Response):
     }
   });
 
+  const thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+  // Fetch past weekly resets within last 30 days
+  const { data: pastResets } = await supabase
+    .from('weekly_resets')
+    .select('winner_id, winner_credits, loser_id, loser_credits')
+    .eq('house_id', houseId)
+    .gte('announced_at', thirtyDaysAgo.toISOString());
+
+  const resetCreditMap: Record<string, number> = {};
+  pastResets?.forEach((r: any) => {
+    if (r.winner_id) resetCreditMap[r.winner_id] = (resetCreditMap[r.winner_id] ?? 0) + (r.winner_credits ?? 0);
+    if (r.loser_id) resetCreditMap[r.loser_id] = (resetCreditMap[r.loser_id] ?? 0) + (r.loser_credits ?? 0);
+  });
+
   const leaderboard = members
-    .map((m) => ({ ...m, periodCredits: creditMap[m.id] ?? 0 }))
+    .map((m: any) => {
+      let credits = creditMap[m.id] ?? 0;
+      const resetCredits = (resetCreditMap[m.id] ?? 0) + (m.weekly_xp ?? 0);
+      credits = Math.max(credits, resetCredits);
+
+      const joinDate = m.created_at ? new Date(m.created_at) : null;
+      if (joinDate && joinDate >= thirtyDaysAgo) {
+        credits = Math.max(credits, m.xp ?? m.total_credits ?? 0);
+      } else {
+        credits = Math.max(credits, m.weekly_xp ?? 0);
+      }
+      return { ...m, periodCredits: credits };
+    })
     .sort((a, b) => b.periodCredits - a.periodCredits)
     .map((m, i) => ({ ...m, rank: i + 1 }));
 

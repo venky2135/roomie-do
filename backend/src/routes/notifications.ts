@@ -254,8 +254,8 @@ router.post('/notify-complaint-upheld', authMiddleware, async (req: AuthRequest,
     const result = await NotificationService.sendToHouse(
       profile.house_id,
       {
-        title: '⚠️ Complaint Upheld: -10 Streaks Penalty!',
-        body: `Roommates voted to uphold the complaint against ${accusedUsername || 'roommate'}. -${streakPenalty} streaks penalty applied! 🔥`,
+        title: '⚠️ Complaint Upheld: Penalty Applied!',
+        body: `Roommates voted to uphold the complaint against ${accusedUsername || 'roommate'}. -${streakPenalty} streaks & -${streakPenalty} XP penalty applied! 🔥`,
         data: {
           type: 'complaint_upheld',
           logId: String(logId || ''),

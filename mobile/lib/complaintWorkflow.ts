@@ -226,21 +226,35 @@ export async function upvoteComplaint(params: {
       return { success: false, error: updateErr.message };
     }
 
-    // If upheld, deduct 10 streaks from the accused roommate's profile
+    // If upheld, deduct 10 streaks and 10 XP/credits from the accused roommate's profile
     if (isUpheld) {
+      const penalty = currentMeta.streakPenalty || 20;
+
       const { data: accusedProfile } = await supabaseAdmin
         .from('profiles')
-        .select('id, streak_days, username')
+        .select('id, streak_days, xp, total_credits, weekly_xp, username')
         .eq('id', currentMeta.accusedId)
         .single();
 
       if (accusedProfile) {
         const currentStreak = accusedProfile.streak_days ?? 0;
-        const newStreak = Math.max(0, currentStreak - 10);
+        const currentXp = accusedProfile.xp ?? 0;
+        const currentCredits = accusedProfile.total_credits ?? 0;
+        const currentWeeklyXp = accusedProfile.weekly_xp ?? 0;
+
+        const newStreak = Math.max(0, currentStreak - penalty);
+        const newXp = Math.max(0, currentXp - penalty);
+        const newCredits = Math.max(0, currentCredits - penalty);
+        const newWeeklyXp = Math.max(0, currentWeeklyXp - penalty);
 
         await supabaseAdmin
           .from('profiles')
-          .update({ streak_days: newStreak })
+          .update({
+            streak_days: newStreak,
+            xp: newXp,
+            total_credits: newCredits,
+            weekly_xp: newWeeklyXp,
+          })
           .eq('id', currentMeta.accusedId);
       }
 
@@ -253,7 +267,7 @@ export async function upvoteComplaint(params: {
         accusedUserId: currentMeta.accusedId,
         accusedUsername: currentMeta.accusedUsername,
         title: currentMeta.title,
-        streakPenalty: 10,
+        streakPenalty: penalty,
       }).catch((e) => console.warn('[Push] Complaint upheld notification failed:', e));
     }
 

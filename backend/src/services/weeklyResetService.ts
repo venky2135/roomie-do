@@ -243,19 +243,16 @@ export class WeeklyResetService {
 
     // NOTE: Per requirement, NO bonus XP is awarded to the winner.
 
-    // 6. CLEAR LIVE FEED DATA:
-    // Delete older task logs for all house members so the database stays fast & loading is instant!
-    console.log(`[WeeklyReset] Clearing previous week live feed logs for house ${houseId}...`);
-    const { error: deleteErr } = await supabase
-      .from('task_logs')
-      .delete()
-      .in('user_id', memberIds);
-
-    if (deleteErr) {
-      console.warn('[WeeklyReset] Warning while purging previous task logs:', deleteErr.message);
-    } else {
-      console.log(`[WeeklyReset] Live feed successfully reset and cleared for new week.`);
-    }
+    // 6. LIVE FEED DATA MANAGEMENT:
+    // Preserve task logs so historical chore logs, photos, and monthly calculations remain intact.
+    // Clean up duplicate/older weekly announcement cards if any.
+    try {
+      await supabase
+        .from('task_logs')
+        .delete()
+        .in('user_id', memberIds)
+        .like('notes', '%"type":"weekly_announcement"%');
+    } catch (_) {}
 
     // 7. Post Sunday Awards Ceremony Card as the fresh new post in Live Feed
     const templateId = await this.getOrCreateWeeklyTemplate(houseId);
@@ -317,6 +314,7 @@ export class WeeklyResetService {
           bounty: stakes.bounty,
           penalty: stakes.penalty,
           totalChores: validLogs.length,
+          memberScores: scores,
         },
         announced_at: new Date().toISOString(),
       },

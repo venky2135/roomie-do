@@ -40,6 +40,7 @@ interface LeaderboardMember {
 export default function HomeScreen() {
   const { profile, refreshProfile } = useAuthStore();
   const [leaderboard, setLeaderboard] = useState<LeaderboardMember[]>([]);
+  const [weeklyLeaderboard, setWeeklyLeaderboard] = useState<LeaderboardMember[]>([]);
   const [onLeaveUserIds, setOnLeaveUserIds] = useState<string[]>([]);
   const [userStreak, setUserStreak] = useState<number | null>(null);
   const [period, setPeriod] = useState<Period>('week');
@@ -89,7 +90,26 @@ export default function HomeScreen() {
     const count = todayLogs?.filter((l) => isLogApproved(l.notes)).length ?? 0;
     setTodayCount(count);
 
-    // Leaderboard with backend + direct Supabase fallback
+    // 1. Always load Weekly Leaderboard for the header progress bar & weekend topper
+    try {
+      const { data: members } = await supabase
+        .from('profiles')
+        .select('id, username, avatar_url, total_credits, xp, streak_days, weekly_xp, created_at')
+        .eq('house_id', profile.house_id);
+
+      if (members && members.length > 0) {
+        const weeklySorted = members
+          .map((m: any) => ({
+            ...m,
+            periodCredits: m.weekly_xp ?? 0,
+          }))
+          .sort((a, b) => b.periodCredits - a.periodCredits)
+          .map((m, i) => ({ ...m, rank: i + 1 }));
+        setWeeklyLeaderboard(weeklySorted);
+      }
+    } catch (_) {}
+
+    // 2. Leaderboard for selected period (week, month, all)
     try {
       const res = await fetchLeaderboard(profile.house_id, p);
       if (res.data?.leaderboard && res.data.leaderboard.length > 0) {
@@ -98,11 +118,11 @@ export default function HomeScreen() {
       }
     } catch (_) {}
 
-    // Fallback: Query Supabase directly
+    // Direct Supabase Fallback for period p
     try {
       const { data: members } = await supabase
         .from('profiles')
-        .select('id, username, avatar_url, total_credits, xp, streak_days, weekly_xp')
+        .select('id, username, avatar_url, total_credits, xp, streak_days, weekly_xp, created_at')
         .eq('house_id', profile.house_id);
 
       if (!members || members.length === 0) {
@@ -131,36 +151,59 @@ export default function HomeScreen() {
             periodCredits: m.xp || m.total_credits || 0,
           }))
         );
-      } else {
-        const days = 30;
-        const sinceDate = new Date();
-        sinceDate.setDate(sinceDate.getDate() - days);
-
-        const memberIds = members.map((m) => m.id);
-        const { data: logs } = await supabase
-          .from('task_logs')
-          .select('user_id, credits_awarded, notes')
-          .in('user_id', memberIds)
-          .gte('completed_at', sinceDate.toISOString());
-
-        const creditMap: Record<string, number> = {};
-        members.forEach((m) => (creditMap[m.id] = 0));
-        logs?.forEach((l) => {
-          if (isLogApproved(l.notes)) {
-            creditMap[l.user_id] = (creditMap[l.user_id] || 0) + (l.credits_awarded || 0);
-          }
-        });
-
-        const sorted = members
-          .map((m) => ({
-            ...m,
-            periodCredits: creditMap[m.id] || 0,
-          }))
-          .sort((a, b) => b.periodCredits - a.periodCredits)
-          .map((m, i) => ({ ...m, rank: i + 1 }));
-
-        setLeaderboard(sorted);
+        return;
       }
+
+      // p === 'month'
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+      const memberIds = members.map((m) => m.id);
+      const { data: logs } = await supabase
+        .from('task_logs')
+        .select('user_id, credits_awarded, notes')
+        .in('user_id', memberIds)
+        .gte('completed_at', thirtyDaysAgo.toISOString());
+
+      const creditMap: Record<string, number> = {};
+      members.forEach((m) => (creditMap[m.id] = 0));
+      logs?.forEach((l) => {
+        if (isLogApproved(l.notes)) {
+          creditMap[l.user_id] = (creditMap[l.user_id] || 0) + (l.credits_awarded || 0);
+        }
+      });
+
+      // Include past weekly resets within last 30 days
+      const { data: pastResets } = await supabase
+        .from('weekly_resets')
+        .select('winner_id, winner_credits, loser_id, loser_credits')
+        .eq('house_id', profile.house_id)
+        .gte('announced_at', thirtyDaysAgo.toISOString());
+
+      const resetCreditMap: Record<string, number> = {};
+      pastResets?.forEach((r: any) => {
+        if (r.winner_id) resetCreditMap[r.winner_id] = (resetCreditMap[r.winner_id] || 0) + (r.winner_credits || 0);
+        if (r.loser_id) resetCreditMap[r.loser_id] = (resetCreditMap[r.loser_id] || 0) + (r.loser_credits || 0);
+      });
+
+      const sorted = members
+        .map((m: any) => {
+          let credits = creditMap[m.id] || 0;
+          const resetCredits = (resetCreditMap[m.id] || 0) + (m.weekly_xp || 0);
+          credits = Math.max(credits, resetCredits);
+
+          const joinDate = m.created_at ? new Date(m.created_at) : null;
+          if (joinDate && joinDate >= thirtyDaysAgo) {
+            credits = Math.max(credits, m.xp || m.total_credits || 0);
+          } else {
+            credits = Math.max(credits, m.weekly_xp || 0);
+          }
+          return { ...m, periodCredits: credits };
+        })
+        .sort((a, b) => b.periodCredits - a.periodCredits)
+        .map((m, i) => ({ ...m, rank: i + 1 }));
+
+      setLeaderboard(sorted);
     } catch (_) {}
   }, [profile?.house_id, profile?.id, period]);
 
@@ -228,8 +271,10 @@ export default function HomeScreen() {
     }
   };
 
-  const topper = leaderboard[0];
-  const maxCredits = Math.max(...leaderboard.map((m) => m.periodCredits), 20);
+  const topper = weeklyLeaderboard[0] || leaderboard[0];
+  const weeklyTargetList = weeklyLeaderboard.length > 0 ? weeklyLeaderboard : leaderboard;
+  const weeklyMaxCredits = Math.max(...weeklyTargetList.map((m) => m.periodCredits), 20);
+  const graphMaxCredits = Math.max(...leaderboard.map((m) => m.periodCredits), 20);
   const streakCount = userStreak !== null ? userStreak : (profile?.streak_days ?? 0);
 
   return (
@@ -283,8 +328,8 @@ export default function HomeScreen() {
         <View style={styles.raceTrackWrapper}>
           {/* Runner Avatars positioned along the horizontal bar */}
           <View style={styles.runnersOverlay}>
-            {leaderboard.map((member, idx) => {
-              const pct = maxCredits > 0 ? Math.min((member.periodCredits / maxCredits) * 100, 90) : 0;
+            {weeklyTargetList.map((member, idx) => {
+              const pct = weeklyMaxCredits > 0 ? Math.min((member.periodCredits / weeklyMaxCredits) * 100, 90) : 0;
               const isLead = idx === 0 && member.periodCredits > 0;
               return (
                 <View
@@ -325,15 +370,15 @@ export default function HomeScreen() {
             <View
               style={[
                 styles.horizontalBarFill,
-                { width: `${Math.min((topper?.periodCredits || 0) / maxCredits * 100, 100)}%` },
+                { width: `${Math.min((topper?.periodCredits || 0) / weeklyMaxCredits * 100, 100)}%` },
               ]}
             />
           </View>
 
           <View style={styles.barMarkers}>
             <Text style={styles.markerText}>0</Text>
-            <Text style={styles.markerText}>{Math.round(maxCredits / 2)}</Text>
-            <Text style={styles.markerText}>{maxCredits} XP Target</Text>
+            <Text style={styles.markerText}>{Math.round(weeklyMaxCredits / 2)}</Text>
+            <Text style={styles.markerText}>{weeklyMaxCredits} XP Target</Text>
           </View>
         </View>
       </View>
@@ -374,7 +419,10 @@ export default function HomeScreen() {
               <TouchableOpacity
                 key={p}
                 style={[styles.periodTab, period === p && styles.periodTabActive]}
-                onPress={() => setPeriod(p)}
+                onPress={() => {
+                  setPeriod(p);
+                  loadData(p);
+                }}
               >
                 <Text style={[styles.periodTabText, period === p && styles.periodTabTextActive]}>
                   {p === 'week' ? 'Week' : p === 'month' ? 'Month' : 'All-Time'}
@@ -395,11 +443,11 @@ export default function HomeScreen() {
           {/* Background Grid Guidelines */}
           <View style={styles.chartGuides}>
             <View style={styles.guideLineRow}>
-              <Text style={styles.guideLabel}>{maxCredits}xp</Text>
+              <Text style={styles.guideLabel}>{graphMaxCredits}xp</Text>
               <View style={styles.guideLine} />
             </View>
             <View style={styles.guideLineRow}>
-              <Text style={styles.guideLabel}>{Math.round(maxCredits / 2)}xp</Text>
+              <Text style={styles.guideLabel}>{Math.round(graphMaxCredits / 2)}xp</Text>
               <View style={styles.guideLine} />
             </View>
             <View style={styles.guideLineRow}>
@@ -411,7 +459,7 @@ export default function HomeScreen() {
           {/* Vertical Columns */}
           <View style={styles.columnsRow}>
             {leaderboard.map((member, idx) => {
-              const heightPct = maxCredits > 0 ? Math.max((member.periodCredits / maxCredits) * 100, 8) : 8;
+              const heightPct = graphMaxCredits > 0 ? Math.max((member.periodCredits / graphMaxCredits) * 100, 8) : 8;
               const isTop = idx === 0 && member.periodCredits > 0;
               const isMe = member.id === profile?.id;
               const isOnLeave = onLeaveUserIds.includes(member.id);

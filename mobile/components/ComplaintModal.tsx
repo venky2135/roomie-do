@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -287,12 +287,12 @@ export default function ComplaintModal({ visible, onClose, onSuccess }: Props) {
             <View style={styles.penaltyCard}>
               <View style={styles.penaltyHeader}>
                 <Ionicons name="flame" size={15} color="#E11D48" />
-                <Text style={styles.penaltyTitle}>Penalty Rule: -10 Streaks</Text>
+                <Text style={styles.penaltyTitle}>Penalty Rule: -10 Streaks & -10 XP</Text>
               </View>
               <Text style={styles.penaltyText}>
                 When other roommates upvote this complaint, the complaint is upheld and{' '}
                 <Text style={styles.penaltyBold}>
-                  {selectedAccused ? `@${selectedAccused.username}` : 'the accused'} will receive -10 streaks
+                  {selectedAccused ? `@${selectedAccused.username}` : 'the accused'} will receive -10 streaks and -10 XP
                 </Text>
                 . Please keep complaints constructive and fair.
               </Text>
