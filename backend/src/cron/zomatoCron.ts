@@ -26,6 +26,16 @@ export const startZomatoCron = () => {
     await ZomatoNotificationService.broadcastRandomNudgeToAll();
   });
 
-  console.log('🔔 Zomato-style notifications scheduled (Midday 1PM IST, Evening 7:30PM IST, Saturday 11AM IST)');
+  // Catch-up check when server boots up / wakes up from Render sleep
+  setTimeout(async () => {
+    try {
+      console.log('🍕 Server wake-up: Checking pending daily promotional nudges...');
+      await ZomatoNotificationService.checkAndRunPendingDailyNudge();
+    } catch (e) {
+      console.warn('[ZomatoCron] Boot catch-up error:', e);
+    }
+  }, 4000);
+
+  console.log('🔔 Zomato-style notifications scheduled (Midday 1PM IST, Evening 7:30PM IST, Saturday 11AM IST + Wake-up Catch-up)');
 };
 

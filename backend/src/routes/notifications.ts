@@ -388,7 +388,7 @@ router.post('/test', authMiddleware, async (req: AuthRequest, res: Response): Pr
   }
 });
 
-// GET /api/notifications/catchup — Flushes queued notifications & performs Sunday catch-up
+// GET /api/notifications/catchup — Flushes queued notifications & performs Sunday + daily nudge catch-up
 router.get('/catchup', async (_req, res: Response): Promise<void> => {
   try {
     const queueResult = await NotificationQueueService.flushQueue();
@@ -400,11 +400,15 @@ router.get('/catchup', async (_req, res: Response): Promise<void> => {
       weeklyRan = true;
     }
 
+    // Daily promotional nudge catch-up (Zomato-style): checks and delivers missed nudges after sleep
+    const nudgeResult = await ZomatoNotificationService.checkAndRunPendingDailyNudge();
+
     res.json({
       success: true,
       message: 'Catch-up executed successfully',
       queue: queueResult,
       weeklyResetChecked: weeklyRan,
+      nudgeChecked: nudgeResult,
     });
   } catch (err: any) {
     console.error('Catch-up error:', err);

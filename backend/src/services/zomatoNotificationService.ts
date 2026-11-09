@@ -1,4 +1,5 @@
 import { NotificationService } from './notificationService';
+import { NotificationQueueService } from './notificationQueueService';
 import { supabase } from '../supabaseClient';
 
 export interface ZomatoMessage {
@@ -70,6 +71,42 @@ export const ZOMATO_MESSAGES: ZomatoMessage[] = [
 ];
 
 export class ZomatoNotificationService {
+  private static isCheckingNudge = false;
+
+  /**
+   * Determine the current promotional slot based on IST time (UTC+5:30).
+   * Defines natural windows during the day:
+   * - Midday: 11:30 AM to 4:00 PM IST
+   * - Evening: 6:00 PM to 10:30 PM IST
+   * - Daytime catch-up: 9:00 AM to 11:00 PM IST
+   * - Quiet hours: 11:00 PM to 9:00 AM IST (do not disturb roommates!)
+   */
+  static getCurrentSlot(): { slotKey: string; slotName: string } | null {
+    const istTime = new Date(Date.now() + 5.5 * 3600 * 1000);
+    const hours = istTime.getUTCHours();
+    const minutes = istTime.getUTCMinutes();
+    const timeInMinutes = hours * 60 + minutes;
+    const dateStr = istTime.toISOString().slice(0, 10); // YYYY-MM-DD
+
+    // 1. Midday / Lunch window: 11:30 AM (690 min) to 4:00 PM (960 min) IST
+    if (timeInMinutes >= 690 && timeInMinutes < 960) {
+      return { slotKey: `${dateStr}-midday`, slotName: 'Midday Nudge' };
+    }
+
+    // 2. Evening / Dinner window: 6:00 PM (1080 min) to 10:30 PM (1350 min) IST
+    if (timeInMinutes >= 1080 && timeInMinutes < 1350) {
+      return { slotKey: `${dateStr}-evening`, slotName: 'Evening Nudge' };
+    }
+
+    // 3. Daytime catch-up: 9:00 AM (540 min) to 11:00 PM (1380 min) IST
+    if (timeInMinutes >= 540 && timeInMinutes < 1380) {
+      return { slotKey: `${dateStr}-daily`, slotName: 'Daily Nudge' };
+    }
+
+    // Quiet hours (11:00 PM to 9:00 AM IST)
+    return null;
+  }
+
   /**
    * Pick a random witty message.
    */
@@ -79,36 +116,87 @@ export class ZomatoNotificationService {
   }
 
   /**
+   * Check and send pending daily promotional nudge across all houses if missed due to Render sleep.
+   */
+  static async checkAndRunPendingDailyNudge(): Promise<{ sent: boolean; reason?: string }> {
+    if (this.isCheckingNudge) {
+      return { sent: false, reason: 'Already in progress' };
+    }
+
+    this.isCheckingNudge = true;
+    try {
+      const slot = this.getCurrentSlot();
+      if (!slot) {
+        return { sent: false, reason: 'Quiet hours (11 PM - 9 AM IST)' };
+      }
+
+      const { data: houses } = await supabase.from('houses').select('id, name');
+      if (!houses || houses.length === 0) {
+        return { sent: false, reason: 'No houses found' };
+      }
+
+      let anySent = false;
+
+      for (const house of houses) {
+        // 1. Check if a nudge was already sent for this exact slot
+        const { data: existingSlotNudge } = await supabase
+          .from('notification_queue')
+          .select('id')
+          .eq('house_id', house.id)
+          .eq('data->>type', 'zomato_nudge')
+          .eq('data->>slotKey', slot.slotKey)
+          .limit(1);
+
+        if (existingSlotNudge && existingSlotNudge.length > 0) {
+          continue; // Already delivered for this slot
+        }
+
+        // 2. Enforce a minimum 3-hour cooldown so we never spam
+        const threeHoursAgo = new Date(Date.now() - 3 * 3600 * 1000).toISOString();
+        const { data: recentNudge } = await supabase
+          .from('notification_queue')
+          .select('id')
+          .eq('house_id', house.id)
+          .eq('data->>type', 'zomato_nudge')
+          .gte('created_at', threeHoursAgo)
+          .limit(1);
+
+        if (recentNudge && recentNudge.length > 0) {
+          continue; // Sent within last 3 hours
+        }
+
+        // 3. Pick random message and enqueue via NotificationQueueService (persistent & sleep-resilient)
+        const message = this.getRandomMessage();
+        console.log(`[ZomatoPush] Delivering ${slot.slotName} to house "${house.name}": "${message.title}"`);
+
+        await NotificationQueueService.enqueue({
+          houseId: house.id,
+          title: message.title,
+          body: message.body,
+          data: {
+            type: 'zomato_nudge',
+            slotKey: slot.slotKey,
+          },
+        });
+
+        anySent = true;
+      }
+
+      return { sent: anySent };
+    } catch (err: any) {
+      console.error('[ZomatoPush] Error checking daily nudge:', err);
+      return { sent: false, reason: err.message };
+    } finally {
+      this.isCheckingNudge = false;
+    }
+  }
+
+  /**
    * Broadcast a random Zomato-style nudge to all active houses.
    */
   static async broadcastRandomNudgeToAll(): Promise<{ housesNotified: number; totalSent: number }> {
-    const { data: houses } = await supabase.from('houses').select('id, name');
-    if (!houses || houses.length === 0) {
-      return { housesNotified: 0, totalSent: 0 };
-    }
-
-    const message = this.getRandomMessage();
-    let totalSent = 0;
-    let housesNotified = 0;
-
-    for (const house of houses) {
-      const result = await NotificationService.sendToHouse(house.id, {
-        title: message.title,
-        body: message.body,
-        data: {
-          type: 'zomato_nudge',
-          timestamp: new Date().toISOString(),
-        },
-      });
-
-      if (result.successCount > 0) {
-        totalSent += result.successCount;
-        housesNotified++;
-      }
-    }
-
-    console.log(`[ZomatoPush] Delivered "${message.title}" to ${totalSent} devices across ${housesNotified} house(s).`);
-    return { housesNotified, totalSent };
+    const res = await this.checkAndRunPendingDailyNudge();
+    return { housesNotified: res.sent ? 1 : 0, totalSent: res.sent ? 1 : 0 };
   }
 
   /**
@@ -116,12 +204,16 @@ export class ZomatoNotificationService {
    */
   static async sendNudgeToHouse(houseId: string, customMessage?: ZomatoMessage) {
     const message = customMessage || this.getRandomMessage();
-    return NotificationService.sendToHouse(houseId, {
+    const slot = this.getCurrentSlot();
+    const slotKey = slot ? slot.slotKey : `manual-${new Date().toISOString().slice(0, 10)}`;
+
+    return NotificationQueueService.enqueue({
+      houseId,
       title: message.title,
       body: message.body,
       data: {
         type: 'zomato_nudge',
-        timestamp: new Date().toISOString(),
+        slotKey,
       },
     });
   }
