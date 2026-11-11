@@ -147,7 +147,7 @@ export async function verifyTaskLog(
     // 1. Fetch current log
     const { data: log, error: logErr } = await supabaseAdmin
       .from('task_logs')
-      .select('*, profiles(id, xp, total_credits, weekly_xp, streak_days)')
+      .select('*, profiles(id, xp, total_credits, weekly_xp, streak_days), task_templates(base_credits)')
       .eq('id', logId)
       .single();
 
@@ -185,7 +185,7 @@ export async function verifyTaskLog(
     // 3. Award XP and total credits to the logger
     const creator = log.profiles;
     if (creator) {
-      const award = log.credits_awarded || 20;
+      const award = (log as any).task_templates?.base_credits ?? log.credits_awarded ?? 20;
       const newXp = (creator.xp || 0) + award;
       const newCredits = (creator.total_credits || 0) + award;
       const newWeeklyXp = (creator.weekly_xp || 0) + award;
@@ -512,4 +512,68 @@ export function parseWeeklyAnnouncementMetadata(notesRaw: string | null | undefi
     }
   } catch {}
   return null;
+}
+
+/**
+ * Delete a chore log (only the creator can delete their chore log).
+ * If the chore was already approved/completed, deducts the awarded XP/credits from the creator's profile.
+ */
+export async function deleteChoreLog(
+  logId: string,
+  userId: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const { data: log, error: logErr } = await supabaseAdmin
+      .from('task_logs')
+      .select('*, profiles(id, xp, total_credits, weekly_xp), task_templates(base_credits)')
+      .eq('id', logId)
+      .single();
+
+    if (logErr || !log) {
+      return { success: false, error: 'Chore log not found.' };
+    }
+
+    if (log.user_id !== userId) {
+      return { success: false, error: 'You can only delete your own chore log.' };
+    }
+
+    const meta = parseLogNotes(log.notes);
+    const wasCompleted = meta.status === 'completed';
+
+    const { error: delErr } = await supabaseAdmin
+      .from('task_logs')
+      .delete()
+      .eq('id', logId)
+      .eq('user_id', userId);
+
+    if (delErr) {
+      return { success: false, error: delErr.message };
+    }
+
+    // If already approved, rollback the awarded XP/credits
+    if (wasCompleted && log.profiles) {
+      const award = (log as any).task_templates?.base_credits ?? log.credits_awarded ?? 20;
+      const creator = log.profiles;
+      const newXp = Math.max(0, (creator.xp || 0) - award);
+      const newCredits = Math.max(0, (creator.total_credits || 0) - award);
+      const newWeeklyXp = Math.max(0, (creator.weekly_xp || 0) - award);
+      const newLevel = Math.floor(newXp / 500) + 1;
+
+      await supabaseAdmin
+        .from('profiles')
+        .update({
+          xp: newXp,
+          total_credits: newCredits,
+          weekly_xp: newWeeklyXp,
+          level: newLevel,
+        })
+        .eq('id', creator.id);
+
+      calculateUserStreak(creator.id).catch(() => {});
+    }
+
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to delete chore log.' };
+  }
 }

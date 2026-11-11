@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -13,11 +13,20 @@ import {
   Platform,
   KeyboardAvoidingView,
   Keyboard,
+  ScrollView,
 } from 'react-native';
 import { useKeyboard } from '../../lib/useKeyboard';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { supabase, supabaseAdmin } from '../../lib/supabase';
 import { useAuthStore } from '../../store/useAuthStore';
+import {
+  useFeedStore,
+  FeedFilterType,
+  isChoreItem,
+  isComplaintItem,
+  isLeaveItem,
+  isUnapprovedItem,
+} from '../../store/useFeedStore';
 import { COLORS, FONTS, SPACING, RADIUS } from '../../constants/theme';
 import AppIcon from '../../components/AppIcon';
 import { notifyChoreApproved } from '../../lib/api';
@@ -25,6 +34,7 @@ import {
   parseLogNotes,
   encodeLogNotes,
   verifyTaskLog,
+  deleteChoreLog,
   addAnonymousFeedback,
   toggleTaskLogReaction,
   TaskLogMetadata,
@@ -44,6 +54,13 @@ import {
 
 const REACTION_EMOJIS = ['🙌', '🔥', '👏', '❤️', '⚡'];
 
+const FILTER_TABS: { key: FeedFilterType; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
+  { key: 'chores', label: 'Chores', icon: 'checkbox-outline' },
+  { key: 'complaints', label: 'Complaints', icon: 'alert-circle-outline' },
+  { key: 'leaves', label: 'Leave', icon: 'airplane-outline' },
+  { key: 'unapproved', label: 'Unapproved', icon: 'hourglass-outline' },
+];
+
 interface FeedItem {
   id: string;
   user_id: string;
@@ -52,12 +69,22 @@ interface FeedItem {
   photo_url: string | null;
   notes: string | null;
   profiles: { username: string; avatar_url: string };
-  task_templates: { name: string; icon: string; category?: string };
+  task_templates: { name: string; icon: string; category?: string; base_credits?: number };
 }
 
 export default function FeedScreen() {
   const { profile, refreshProfile } = useAuthStore();
   const { keyboardHeight } = useKeyboard();
+  const {
+    activeFilter,
+    setActiveFilter,
+    unreadCounts,
+    loadSeenState,
+    isItemSeen,
+    computeUnreadCounts,
+    markItemsSeen,
+    markAllSeen,
+  } = useFeedStore();
   const [feed, setFeed] = useState<FeedItem[]>([]);
   const [membersCount, setMembersCount] = useState(1);
   const [refreshing, setRefreshing] = useState(false);
@@ -69,6 +96,12 @@ export default function FeedScreen() {
   const [feedbackLogId, setFeedbackLogId] = useState<string | null>(null);
   const [feedbackText, setFeedbackText] = useState('');
   const [submittingFeedback, setSubmittingFeedback] = useState(false);
+
+  useEffect(() => {
+    if (profile?.id) {
+      loadSeenState(profile.id);
+    }
+  }, [profile?.id, loadSeenState]);
 
   const loadFeed = useCallback(async () => {
     if (!profile?.house_id) return;
@@ -83,12 +116,13 @@ export default function FeedScreen() {
 
       if (memberIds.length === 0) {
         setFeed([]);
+        computeUnreadCounts([]);
         return;
       }
 
       const { data } = await supabaseAdmin
         .from('task_logs')
-        .select('*, profiles(username, avatar_url), task_templates(name, icon, category)')
+        .select('*, profiles(username, avatar_url), task_templates(name, icon, category, base_credits)')
         .in('user_id', memberIds)
         .order('completed_at', { ascending: false })
         .limit(50);
@@ -106,8 +140,9 @@ export default function FeedScreen() {
       });
 
       setFeed(dedupedLogs);
+      computeUnreadCounts(dedupedLogs);
     } catch (_) {}
-  }, [profile?.house_id]);
+  }, [profile?.house_id, computeUnreadCounts]);
 
   useEffect(() => {
     loadFeed();
@@ -168,11 +203,14 @@ export default function FeedScreen() {
         notifyChoreApproved({
           logId,
           workerUserId: targetItem.user_id,
-          taskName: (targetItem as any).task?.name || 'chore',
-          award: targetItem.credits_awarded || 20,
+          taskName: (targetItem as any).task?.name || targetItem.task_templates?.name || 'chore',
+          award: targetItem.task_templates?.base_credits ?? targetItem.credits_awarded ?? 20,
         }).catch((err) => console.warn('[PushNotification] Failed to notify chore creator:', err));
       }
       if (res.success) {
+        if (profile?.id) {
+          markItemsSeen(profile.id, [logId], feed);
+        }
         if (Platform.OS === 'web') {
           alert('Approved! 👍 XP points have been awarded.');
         } else {
@@ -206,6 +244,39 @@ export default function FeedScreen() {
     }
   };
 
+  const handleDeleteChore = async (logId: string, isPending: boolean) => {
+    if (!profile?.id) return;
+
+    const doDelete = async () => {
+      // Optimistic delete
+      setFeed((prev) => prev.filter((item) => item.id !== logId));
+      const res = await deleteChoreLog(logId, profile.id);
+      if (res.success) {
+        refreshProfile();
+      } else {
+        const err = res.error || 'Failed to delete chore log';
+        if (Platform.OS === 'web') alert(err);
+        else Alert.alert('Error', err);
+        await loadFeed();
+      }
+    };
+
+    const confirmMsg = isPending
+      ? 'Are you sure you want to delete this chore log?'
+      : 'Are you sure you want to delete this approved chore? The awarded XP will be deducted from your profile.';
+
+    if (Platform.OS === 'web') {
+      if (typeof window !== 'undefined' && window.confirm(confirmMsg)) {
+        await doDelete();
+      }
+    } else {
+      Alert.alert('Delete Chore Log', confirmMsg, [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: doDelete },
+      ]);
+    }
+  };
+
   const handleApproveLeave = async (logId: string) => {
     if (!profile?.id || !profile?.house_id) return;
 
@@ -218,6 +289,9 @@ export default function FeedScreen() {
       });
 
       if (res.success) {
+        if (profile?.id) {
+          markItemsSeen(profile.id, [logId], feed);
+        }
         if (res.isFullyApproved) {
           const msg = 'Leave approved! All roommates have approved this request and XP points have been awarded.';
           if (Platform.OS === 'web') alert(msg);
@@ -333,8 +407,11 @@ export default function FeedScreen() {
       });
 
       if (res.success) {
+        if (profile?.id) {
+          markItemsSeen(profile.id, [logId], feed);
+        }
         if (res.isUpheld) {
-          const msg = `Complaint upheld! ${meta.accusedUsername} has received -10 streaks and -10 XP penalty.`;
+          const msg = `Complaint upheld! ${meta.accusedUsername} has received -${meta.streakPenalty || 25} streaks and -${meta.streakPenalty || 25} XP penalty.`;
           if (Platform.OS === 'web') alert(msg);
           else Alert.alert('Complaint Upheld! ⚠️', msg);
         } else {
@@ -356,14 +433,14 @@ export default function FeedScreen() {
       const confirmed =
         typeof window !== 'undefined'
           ? window.confirm(
-              `Upvote this complaint? If required upvotes are reached, ${meta.accusedUsername} will lose 10 streaks and 10 XP.`
+              `Upvote this complaint? If required upvotes are reached, ${meta.accusedUsername} will lose ${meta.streakPenalty || 25} streaks and ${meta.streakPenalty || 25} XP.`
             )
           : true;
       if (confirmed) await doUpvote();
     } else {
       Alert.alert(
         'Upvote Complaint',
-        `Upvote this complaint? If corroborated by roommates, ${meta.accusedUsername} will receive -10 streaks and -10 XP penalty.`,
+        `Upvote this complaint? If corroborated by roommates, ${meta.accusedUsername} will receive -${meta.streakPenalty || 25} streaks and -${meta.streakPenalty || 25} XP penalty.`,
         [
           { text: 'Cancel', style: 'cancel' },
           { text: 'Upvote 👍', onPress: doUpvote },
@@ -431,6 +508,9 @@ export default function FeedScreen() {
 
     // Suppress realtime reload during feedback write to avoid overwriting optimistic state
     suppressRealtimeRef.current = true;
+    if (profile?.id) {
+      markItemsSeen(profile.id, [logId], feed);
+    }
     const res = await addAnonymousFeedback(logId, textToSend);
     suppressRealtimeRef.current = false;
     setSubmittingFeedback(false);
@@ -474,6 +554,9 @@ export default function FeedScreen() {
 
     // Correct arg order: (logId, userId, emoji) — suppress realtime reload on success to avoid flicker
     suppressRealtimeRef.current = true;
+    if (profile?.id) {
+      markItemsSeen(profile.id, [logId], feed);
+    }
     const res = await toggleTaskLogReaction(logId, profile.id, emoji);
     suppressRealtimeRef.current = false;
     if (!res.success) {
@@ -491,26 +574,180 @@ export default function FeedScreen() {
     return `${Math.floor(hrs / 24)}d ago`;
   };
 
+  const handleSelectFilter = (filterKey: FeedFilterType) => {
+    setActiveFilter(filterKey);
+    if (profile?.id) {
+      const itemsToMark = feed.filter((item) => {
+        if (filterKey === 'chores') return isChoreItem(item.notes);
+        if (filterKey === 'complaints') return isComplaintItem(item.notes);
+        if (filterKey === 'leaves') return isLeaveItem(item.notes);
+        if (filterKey === 'unapproved') return isUnapprovedItem(item.notes);
+        return false;
+      });
+      if (itemsToMark.length > 0) {
+        markItemsSeen(profile.id, itemsToMark.map((i) => i.id), feed);
+      }
+    }
+  };
+
+  const handleMarkAllAsRead = async () => {
+    if (!profile?.id) return;
+    await markAllSeen(profile.id, feed);
+  };
+
+  const filteredFeed = useMemo(() => {
+    switch (activeFilter) {
+      case 'complaints':
+        return feed.filter((item) => isComplaintItem(item.notes));
+      case 'leaves':
+        return feed.filter((item) => isLeaveItem(item.notes));
+      case 'unapproved':
+        return feed.filter((item) => isUnapprovedItem(item.notes));
+      case 'chores':
+      default:
+        return feed.filter((item) => isChoreItem(item.notes));
+    }
+  }, [feed, activeFilter]);
+
+  const emptyInfo = useMemo(() => {
+    switch (activeFilter) {
+      case 'complaints':
+        return {
+          title: 'No complaints reported',
+          sub: 'All is peaceful! No anonymous complaints reported in the house.',
+          icon: 'shield-checkmark-outline' as const,
+        };
+      case 'leaves':
+        return {
+          title: 'No leave requests',
+          sub: 'No one has applied for leave. Everyone is home!',
+          icon: 'airplane-outline' as const,
+        };
+      case 'unapproved':
+        return {
+          title: 'All caught up! 🎉',
+          sub: 'No chores, complaints, or leave requests waiting for approval.',
+          icon: 'checkmark-circle-outline' as const,
+        };
+      case 'chores':
+      default:
+        return {
+          title: 'No chores found',
+          sub: 'Roommates haven\'t logged any chores yet.',
+          icon: 'checkbox-outline' as const,
+        };
+    }
+  }, [activeFilter]);
+
+  // Jumble tabs with unseen feed to the front
+  const sortedFilterTabs = useMemo(() => {
+    return [...FILTER_TABS].sort((a, b) => {
+      const countA = unreadCounts[a.key] || 0;
+      const countB = unreadCounts[b.key] || 0;
+
+      const hasUnseenA = countA > 0;
+      const hasUnseenB = countB > 0;
+
+      // Tabs with unseen feed jumble to the front
+      if (hasUnseenA && !hasUnseenB) return -1;
+      if (!hasUnseenA && hasUnseenB) return 1;
+
+      // When both have unseen feed: higher count first
+      if (hasUnseenA && hasUnseenB) {
+        if (countB !== countA) return countB - countA;
+      }
+
+      // Default layout order
+      const defaultOrder: Record<FeedFilterType, number> = {
+        chores: 0,
+        complaints: 1,
+        leaves: 2,
+        unapproved: 3,
+        all: 4,
+      };
+      return defaultOrder[a.key] - defaultOrder[b.key];
+    });
+  }, [unreadCounts]);
+
   return (
     <View style={styles.container}>
+      {/* Top Bar Header with Title & Mark All Seen */}
       <View style={styles.titleRow}>
-        <Ionicons name="newspaper-outline" size={26} color={COLORS.text} />
-        <Text style={styles.title}>Activity Feed</Text>
+        <View style={styles.titleLeft}>
+          <Ionicons name="newspaper-outline" size={24} color={COLORS.text} />
+          <Text style={styles.title}>Activity Feed</Text>
+        </View>
+        {unreadCounts.all > 0 && (
+          <TouchableOpacity
+            style={styles.markAllSeenBtn}
+            onPress={handleMarkAllAsRead}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="checkmark-done" size={14} color={COLORS.primary} />
+            <Text style={styles.markAllSeenText}>Mark all seen</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+
+      {/* Rectangular Top Bar Filter Tabs (compact & fitted for mobile layout) */}
+      <View style={styles.filterBarWrapper}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.filterScrollContent}
+        >
+          {sortedFilterTabs.map((tab) => {
+            const isActive = activeFilter === tab.key;
+            const count = unreadCounts[tab.key] || 0;
+
+            return (
+              <TouchableOpacity
+                key={tab.key}
+                style={[styles.filterTab, isActive && styles.filterTabActive]}
+                onPress={() => handleSelectFilter(tab.key)}
+                activeOpacity={0.75}
+              >
+                <Ionicons
+                  name={tab.icon}
+                  size={11}
+                  color={isActive ? '#FFFFFF' : '#64748B'}
+                />
+                <Text
+                  style={[styles.filterTabText, isActive && styles.filterTabTextActive]}
+                  numberOfLines={1}
+                >
+                  {tab.label}
+                </Text>
+                {count > 0 && (
+                  <View style={[styles.tabCountBadge, isActive && styles.tabCountBadgeActive]}>
+                    <Text style={[styles.tabCountBadgeText, isActive && styles.tabCountBadgeTextActive]}>
+                      {count > 99 ? '99+' : count}
+                    </Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
       </View>
 
       <FlatList
-        data={feed}
+        data={filteredFeed}
         keyExtractor={(item) => item.id}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />}
         contentContainerStyle={{ paddingBottom: 40 }}
         ListEmptyComponent={
           <View style={styles.emptyCard}>
-            <Ionicons name="chatbubbles-outline" size={48} color={COLORS.textLight} />
-            <Text style={styles.emptyTitle}>No activity logs yet</Text>
-            <Text style={styles.emptySub}>Log chores, claim tasks, or apply for leave to populate the feed!</Text>
+            <View style={styles.emptyIconCircle}>
+              <Ionicons name={emptyInfo.icon} size={32} color={COLORS.textLight} />
+            </View>
+            <Text style={styles.emptyTitle}>{emptyInfo.title}</Text>
+            <Text style={styles.emptySub}>{emptyInfo.sub}</Text>
           </View>
         }
         renderItem={({ item }) => {
+          const isSeen = isItemSeen(item.id, item.completed_at);
+
           // Check if item is an Anonymous Complaint
           const complaintMeta = parseComplaintMetadata(item.notes);
 
@@ -524,7 +761,12 @@ export default function FeedScreen() {
             const progressPct = Math.min(100, Math.round((upvoteCount / requiredUpvotes) * 100));
 
             return (
-              <View style={[styles.complaintCard, isUpheld && styles.complaintCardUpheld]}>
+              <View
+                style={[styles.complaintCard, isUpheld && styles.complaintCardUpheld]}
+                onTouchEnd={() => {
+                  if (profile?.id && !isSeen) markItemsSeen(profile.id, [item.id], feed);
+                }}
+              >
                 {/* 1. Header Row */}
                 <View style={styles.complaintHeader}>
                   <View style={styles.complaintAvatarCircle}>
@@ -533,20 +775,24 @@ export default function FeedScreen() {
                   <View style={styles.complaintHeaderInfo}>
                     <View style={styles.complaintHeaderTitleRow}>
                       <Text style={styles.complaintUsername}>Anonymous Report</Text>
-                      {/* <View style={styles.complaintAnonPill}>
-                        <Text style={styles.complaintAnonPillText}>ANON REPORT</Text>
-                      </View> */}
                     </View>
                     <Text style={styles.complaintTimeAndCat}>
                       {complaintMeta.category} • {timeAgo(item.completed_at)}
                     </Text>
                   </View>
 
+                  {!isSeen && (
+                    <View style={styles.unseenBadge}>
+                      <View style={styles.unseenDot} />
+                      <Text style={styles.unseenBadgeText}>NEW</Text>
+                    </View>
+                  )}
+
                   {/* Penalty Badge */}
                   <View style={[styles.complaintPenaltyBadge, isUpheld && styles.complaintPenaltyBadgeUpheld]}>
                     <Ionicons name="flame" size={11} color={isUpheld ? '#DC2626' : '#E11D48'} />
                     <Text style={[styles.complaintPenaltyText, isUpheld && { color: '#DC2626' }]}>
-                      {isUpheld ? '-10 Streaks & XP' : '-10 Streaks & XP Risk'}
+                      {isUpheld ? `-${complaintMeta.streakPenalty || 25} Streaks & XP` : `-${complaintMeta.streakPenalty || 25} Streaks & XP Risk`}
                     </Text>
                   </View>
                 </View>
@@ -577,7 +823,7 @@ export default function FeedScreen() {
                   <View style={styles.complaintUpheldBanner}>
                     <Ionicons name="checkmark-circle" size={14} color="#DC2626" />
                     <Text style={styles.complaintUpheldBannerText}>
-                      Upheld by roommates. -10 streaks & -10 XP penalty applied to @{complaintMeta.accusedUsername}.
+                      Upheld by roommates. -{complaintMeta.streakPenalty || 25} streaks & -{complaintMeta.streakPenalty || 25} XP penalty applied to @{complaintMeta.accusedUsername}.
                     </Text>
                   </View>
                 ) : (
@@ -697,7 +943,12 @@ export default function FeedScreen() {
             const hasApproved = profile?.id ? leaveMeta.approvals.includes(profile.id) : false;
 
             return (
-              <View style={[styles.card, styles.leaveCard, isApproved && styles.leaveCardApproved]}>
+              <View
+                style={[styles.card, styles.leaveCard, isApproved && styles.leaveCardApproved]}
+                onTouchEnd={() => {
+                  if (profile?.id && !isSeen) markItemsSeen(profile.id, [item.id], feed);
+                }}
+              >
                 {/* Leave Card Header */}
                 <View style={styles.cardHeader}>
                   <Text style={styles.avatar}>{item.profiles?.avatar_url || '🧑'}</Text>
@@ -711,6 +962,12 @@ export default function FeedScreen() {
                     </View>
                     <Text style={styles.time}>{timeAgo(item.completed_at)}</Text>
                   </View>
+                  {!isSeen && (
+                    <View style={styles.unseenBadge}>
+                      <View style={styles.unseenDot} />
+                      <Text style={styles.unseenBadgeText}>NEW</Text>
+                    </View>
+                  )}
                   <View style={[styles.creditsPill, styles.leaveCreditsPill]}>
                     <Ionicons name="flash" size={12} color="#0284C7" />
                     <Text style={[styles.creditsText, { color: '#0284C7' }]}>
@@ -840,7 +1097,12 @@ export default function FeedScreen() {
             const isLoser = weeklyMeta.loser?.id === profile?.id;
 
             return (
-              <View style={[styles.card, styles.sundayCard]}>
+              <View
+                style={[styles.card, styles.sundayCard]}
+                onTouchEnd={() => {
+                  if (profile?.id && !isSeen) markItemsSeen(profile.id, [item.id], feed);
+                }}
+              >
                 {/* Header */}
                 <View style={styles.sundayHeader}>
                   <View style={styles.sundayTrophyCircle}>
@@ -855,6 +1117,12 @@ export default function FeedScreen() {
                     </View>
                     <Text style={styles.sundayTime}>{timeAgo(item.completed_at)}</Text>
                   </View>
+                  {!isSeen && (
+                    <View style={styles.unseenBadge}>
+                      <View style={styles.unseenDot} />
+                      <Text style={styles.unseenBadgeText}>NEW</Text>
+                    </View>
+                  )}
                 </View>
 
                 {/* Banner */}
@@ -934,7 +1202,12 @@ export default function FeedScreen() {
           const isMine = item.user_id === profile?.id;
 
           return (
-            <View style={styles.card}>
+            <View
+              style={styles.card}
+              onTouchEnd={() => {
+                if (profile?.id && !isSeen) markItemsSeen(profile.id, [item.id], feed);
+              }}
+            >
               {/* Card Header */}
               <View style={styles.cardHeader}>
                 <Text style={styles.avatar}>{item.profiles?.avatar_url || '🧑'}</Text>
@@ -942,12 +1215,23 @@ export default function FeedScreen() {
                   <Text style={styles.username}>{item.profiles?.username || 'Roommate'}</Text>
                   <Text style={styles.time}>{timeAgo(item.completed_at)}</Text>
                 </View>
-                <View style={[styles.creditsPill, isPending && styles.creditsPillPending]}>
-                  <Ionicons name="flash" size={12} color={isPending ? COLORS.accent : COLORS.primary} />
-                  <Text style={[styles.creditsText, isPending && { color: COLORS.accent }]}>
-                    {isPending ? `+${item.credits_awarded} XP pending` : `+${item.credits_awarded} XP`}
-                  </Text>
-                </View>
+                {!isSeen && (
+                  <View style={styles.unseenBadge}>
+                    <View style={styles.unseenDot} />
+                    <Text style={styles.unseenBadgeText}>NEW</Text>
+                  </View>
+                )}
+                {(() => {
+                  const choreXp = item.task_templates?.base_credits ?? item.credits_awarded;
+                  return (
+                    <View style={[styles.creditsPill, isPending && styles.creditsPillPending]}>
+                      <Ionicons name="flash" size={12} color={isPending ? COLORS.accent : COLORS.primary} />
+                      <Text style={[styles.creditsText, isPending && { color: COLORS.accent }]}>
+                        {isPending ? `+${choreXp} XP pending` : `+${choreXp} XP`}
+                      </Text>
+                    </View>
+                  );
+                })()}
               </View>
 
               {/* Task Row */}
@@ -1060,14 +1344,28 @@ export default function FeedScreen() {
                   })}
                 </View>
 
-                {/* Anonymous Feedback Button */}
-                <TouchableOpacity
-                  style={styles.anonActionBtn}
-                  onPress={() => setFeedbackLogId(item.id)}
-                >
-                  <Ionicons name="chatbubble-ellipses-outline" size={12} color={COLORS.primary} />
-                  <Text style={styles.anonActionText}>Feedback</Text>
-                </TouchableOpacity>
+                {/* Right Actions: Bin Icon Button (isMine) + Anonymous Feedback Button */}
+                <View style={styles.footerRightActions}>
+                  {isMine && (
+                    <TouchableOpacity
+                      style={styles.choreDeleteIconBtn}
+                      onPress={() => handleDeleteChore(item.id, isPending)}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons name="trash-outline" size={13} color={COLORS.error} />
+                    </TouchableOpacity>
+                  )}
+
+                  {/* Anonymous Feedback Button */}
+                  <TouchableOpacity
+                    style={styles.anonActionBtn}
+                    onPress={() => setFeedbackLogId(item.id)}
+                  >
+                    <Ionicons name="chatbubble-ellipses-outline" size={12} color={COLORS.primary} />
+                    <Text style={styles.anonActionText}>Feedback</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
             </View>
           );
@@ -1138,8 +1436,112 @@ export default function FeedScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F8F9FA', paddingTop: 44, paddingHorizontal: 12 },
-  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 },
+  titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
+  titleLeft: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   title: { fontSize: 16, fontWeight: '800', color: '#1A1A24' },
+  markAllSeenBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#DCFCE7',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: RADIUS.full,
+  },
+  markAllSeenText: { fontSize: 10, fontWeight: '700', color: COLORS.primary },
+  filterBarWrapper: { marginBottom: 10 },
+  filterScrollContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  filterTab: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    gap: 3,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.02,
+    shadowRadius: 1,
+    elevation: 1,
+  },
+  filterTabActive: {
+    backgroundColor: '#1E293B',
+    borderColor: '#1E293B',
+  },
+  filterTabText: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  filterTabTextActive: {
+    color: '#FFFFFF',
+  },
+  tabCountBadge: {
+    backgroundColor: '#EF4444',
+    minWidth: 15,
+    height: 15,
+    borderRadius: 7.5,
+    paddingHorizontal: 3,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 1,
+  },
+  tabCountBadgeActive: {
+    backgroundColor: '#EF4444',
+    borderWidth: 1,
+    borderColor: '#FFFFFF',
+  },
+  tabCountBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 9,
+    fontWeight: '800',
+    lineHeight: 11,
+  },
+  tabCountBadgeTextActive: {
+    color: '#FFFFFF',
+  },
+  unseenBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: RADIUS.full,
+    gap: 4,
+    marginRight: 6,
+  },
+  unseenDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#EF4444',
+  },
+  unseenBadgeText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#DC2626',
+    letterSpacing: 0.5,
+  },
+  emptyIconCircle: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#F8F9FA',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
   emptyCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: RADIUS.sm,
@@ -1259,6 +1661,21 @@ const styles = StyleSheet.create({
   verifyBtnText: { color: '#FFF', fontSize: 10, fontWeight: '700' },
   verifiedRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   verifiedText: { fontSize: 10, color: COLORS.success, fontWeight: '700' },
+  footerRightActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  choreDeleteIconBtn: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFF1F2',
+    borderWidth: 1,
+    borderColor: '#FECDD3',
+    width: 24,
+    height: 24,
+    borderRadius: RADIUS.full,
+  },
   floatingFeedbackWrapper: {
     marginVertical: 4,
     gap: 4,

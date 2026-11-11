@@ -151,7 +151,7 @@ export async function calculateUserStreak(userId: string): Promise<number> {
           try {
             const p = JSON.parse(cl.notes || '');
             if (p && p.type === 'anonymous_complaint' && p.status === 'upheld' && p.accusedId === userId) {
-              const penalty = Number(p.streakPenalty) || 10;
+              const penalty = Number(p.streakPenalty) || 25;
               streak = Math.max(0, streak - penalty);
             }
           } catch {}

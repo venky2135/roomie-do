@@ -287,12 +287,12 @@ export default function ComplaintModal({ visible, onClose, onSuccess }: Props) {
             <View style={styles.penaltyCard}>
               <View style={styles.penaltyHeader}>
                 <Ionicons name="flame" size={15} color="#E11D48" />
-                <Text style={styles.penaltyTitle}>Penalty Rule: -10 Streaks & -10 XP</Text>
+                <Text style={styles.penaltyTitle}>Penalty Rule: -25 Streaks & -25 XP</Text>
               </View>
               <Text style={styles.penaltyText}>
                 When other roommates upvote this complaint, the complaint is upheld and{' '}
                 <Text style={styles.penaltyBold}>
-                  {selectedAccused ? `@${selectedAccused.username}` : 'the accused'} will receive -10 streaks and -10 XP
+                  {selectedAccused ? `@${selectedAccused.username}` : 'the accused'} will receive -25 streaks and -25 XP
                 </Text>
                 . Please keep complaints constructive and fair.
               </Text>

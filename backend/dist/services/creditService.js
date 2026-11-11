@@ -32,9 +32,6 @@ const calculateCredits = async (userId, taskBaseCredits, hasPhoto, isHighPriorit
     const streakMultiplier = Math.min(1 + effectiveStreak * 0.1, 2.0);
     const streakBonus = effectiveStreak > 0;
     credits = Math.round(credits * streakMultiplier);
-    // Photo proof bonus
-    if (hasPhoto)
-        credits += 5;
     // High priority bonus
     if (isHighPriority)
         credits += 15;

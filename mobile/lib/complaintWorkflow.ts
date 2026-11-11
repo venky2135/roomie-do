@@ -13,7 +13,7 @@ export interface ComplaintMetadata {
   reporterId: string; // Stored securely to prevent self-voting or self-complaining, never revealed publicly in UI
   upvotes: string[]; // User IDs of roommates who upvoted
   status: 'pending' | 'upheld' | 'dismissed';
-  streakPenalty: number; // -10 streaks penalty
+  streakPenalty: number; // -25 streaks penalty
   requiredUpvotes: number; // Number of upvotes needed to uphold
   upheldAt?: string;
 }
@@ -37,7 +37,7 @@ export function parseComplaintMetadata(notesRaw: string | null | undefined): Com
         reporterId: parsed.reporterId || '',
         upvotes: Array.isArray(parsed.upvotes) ? parsed.upvotes : [],
         status: parsed.status || 'pending',
-        streakPenalty: Number(parsed.streakPenalty) || 10,
+        streakPenalty: Number(parsed.streakPenalty) || 25,
         requiredUpvotes: Number(parsed.requiredUpvotes) || 1,
         upheldAt: parsed.upheldAt,
       };
@@ -130,7 +130,7 @@ export async function submitAnonymousComplaint(params: {
       reporterId: params.reporterId,
       upvotes: [],
       status: 'pending',
-      streakPenalty: 10,
+      streakPenalty: 25,
       requiredUpvotes,
     };
 
@@ -226,9 +226,9 @@ export async function upvoteComplaint(params: {
       return { success: false, error: updateErr.message };
     }
 
-    // If upheld, deduct 10 streaks and 10 XP/credits from the accused roommate's profile
+    // If upheld, deduct 25 streaks and 25 XP/credits from the accused roommate's profile
     if (isUpheld) {
-      const penalty = currentMeta.streakPenalty || 20;
+      const penalty = currentMeta.streakPenalty || 25;
 
       const { data: accusedProfile } = await supabaseAdmin
         .from('profiles')

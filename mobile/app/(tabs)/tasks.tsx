@@ -115,7 +115,7 @@ export default function TasksScreen() {
         .insert({
           user_id: profile.id,
           task_id: selectedTask.id,
-          credits_awarded: selectedTask.base_credits + (uploadedUrl ? 5 : 0),
+          credits_awarded: selectedTask.base_credits,
           photo_url: uploadedUrl,
           notes: encodeLogNotes(logMetadata),
           completed_at: new Date().toISOString(),
@@ -274,7 +274,7 @@ export default function TasksScreen() {
                     </View>
 
                     <Text style={styles.modalCredits}>
-                      Base Reward: +{selectedTask?.base_credits} XP {selectedTask?.photo_required ? '(Photo required)' : '(+5 XP with photo proof)'}
+                      Reward: +{selectedTask?.base_credits} XP {selectedTask?.photo_required ? '(Photo required)' : ''}
                     </Text>
 
                     <Text style={styles.inputLabel}>Notes (optional)</Text>
@@ -290,16 +290,25 @@ export default function TasksScreen() {
                     {/* Photo Proof Header with Status Badge */}
                     <View style={styles.photoLabelRow}>
                       <Text style={styles.inputLabel}>Photo Proof</Text>
-                      <View style={selectedTask?.photo_required ? styles.photoReqBadge : styles.photoOptBadge}>
-                        <Ionicons
-                          name={selectedTask?.photo_required ? 'alert-circle' : 'sparkles'}
-                          size={11}
-                          color={selectedTask?.photo_required ? '#D97706' : COLORS.primary}
-                        />
-                        <Text style={selectedTask?.photo_required ? styles.photoReqBadgeText : styles.photoOptBadgeText}>
-                          {selectedTask?.photo_required ? 'Required *' : 'Optional (+5 XP bonus)'}
-                        </Text>
-                      </View>
+                      {selectedTask?.photo_required ? (
+                        <View style={styles.photoReqBadge}>
+                          <Ionicons
+                            name="alert-circle"
+                            size={11}
+                            color="#D97706"
+                          />
+                          <Text style={styles.photoReqBadgeText}>Required *</Text>
+                        </View>
+                      ) : (
+                        <View style={styles.photoOptBadge}>
+                          <Ionicons
+                            name="camera-outline"
+                            size={11}
+                            color={COLORS.primary}
+                          />
+                          <Text style={styles.photoOptBadgeText}>Optional</Text>
+                        </View>
+                      )}
                     </View>
 
                     {photoUri ? (

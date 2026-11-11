@@ -36,8 +36,6 @@ router.post('/log', authMiddleware_1.authMiddleware, async (req, res) => {
     }
     // Calculate potential credits (awarded only upon roommate approval)
     let creditsAwarded = task.base_credits;
-    if (photoUrl)
-        creditsAwarded += 5;
     if (isHighPriority)
         creditsAwarded += 15;
     const logMetadata = {

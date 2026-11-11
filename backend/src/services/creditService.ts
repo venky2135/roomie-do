@@ -49,9 +49,6 @@ export const calculateCredits = async (
   const streakBonus = effectiveStreak > 0;
   credits = Math.round(credits * streakMultiplier);
 
-  // Photo proof bonus
-  if (hasPhoto) credits += 5;
-
   // High priority bonus
   if (isHighPriority) credits += 15;
 

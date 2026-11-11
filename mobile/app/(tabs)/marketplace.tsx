@@ -31,6 +31,7 @@ import {
   MarketplaceTask,
 } from '../../lib/taskWorkflow';
 import { pickImage, uploadTaskPhoto } from '../../lib/photoUpload';
+import { useMarketplaceStore } from '../../store/useMarketplaceStore';
 
 export default function MarketplaceScreen() {
   const { profile, refreshProfile } = useAuthStore();
@@ -58,6 +59,9 @@ export default function MarketplaceScreen() {
     try {
       const marketData = await fetchMarketplaceTasks(profile.house_id);
       setTasks(marketData);
+      if (profile?.id) {
+        useMarketplaceStore.getState().markAllSeen(profile.id, marketData.map((t) => t.id));
+      }
 
       // Load admin task templates (backend API with direct Supabase fallback)
       let regularTemplates: TaskTemplate[] = [];

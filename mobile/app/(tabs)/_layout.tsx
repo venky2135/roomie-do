@@ -1,24 +1,75 @@
-import React from 'react';
-import { View, ActivityIndicator } from 'react-native';
+import React, { useEffect } from 'react';
+import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
 import { Tabs, Redirect } from 'expo-router';
 import Ionicons from '@expo/vector-icons/Ionicons';
+import { supabase } from '../../lib/supabase';
 import { useAuthStore } from '../../store/useAuthStore';
+import { useFeedStore } from '../../store/useFeedStore';
+import { useMarketplaceStore } from '../../store/useMarketplaceStore';
 import { COLORS } from '../../constants/theme';
 
 function TabBarIcon({
   name,
   focused,
   color,
+  badge,
 }: {
   name: keyof typeof Ionicons.glyphMap;
   focused: boolean;
   color?: any;
+  badge?: number;
 }) {
-  return <Ionicons name={name} size={focused ? 24 : 22} color={color} />;
+  return (
+    <View style={styles.iconContainer}>
+      <Ionicons name={name} size={focused ? 24 : 22} color={color} />
+      {typeof badge === 'number' && badge > 0 ? (
+        <View style={styles.tabBadgeBubble}>
+          <Text style={styles.tabBadgeText}>
+            {badge > 99 ? '99+' : badge}
+          </Text>
+        </View>
+      ) : null}
+    </View>
+  );
 }
 
 export default function TabLayout() {
   const { session, profile, initialized } = useAuthStore();
+  const { unreadCounts, fetchAndComputeUnread: fetchFeedUnread } = useFeedStore();
+  const { unreadCount: marketplaceUnreadCount, fetchAndComputeUnread: fetchMarketplaceUnread } = useMarketplaceStore();
+
+  useEffect(() => {
+    if (!profile?.house_id || !profile?.id) return;
+
+    // Fetch initial unread counts for Feed and Marketplace
+    fetchFeedUnread(profile.house_id, profile.id);
+    fetchMarketplaceUnread(profile.house_id, profile.id);
+
+    // Realtime listener for Feed (task_logs)
+    const feedChannel = supabase
+      .channel('tab-layout-feed-channel')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'task_logs' }, () => {
+        if (profile?.house_id && profile?.id) {
+          fetchFeedUnread(profile.house_id, profile.id);
+        }
+      })
+      .subscribe();
+
+    // Realtime listener for Marketplace (task_templates)
+    const marketChannel = supabase
+      .channel('tab-layout-market-channel')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'task_templates' }, () => {
+        if (profile?.house_id && profile?.id) {
+          fetchMarketplaceUnread(profile.house_id, profile.id);
+        }
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(feedChannel);
+      supabase.removeChannel(marketChannel);
+    };
+  }, [profile?.house_id, profile?.id, fetchFeedUnread, fetchMarketplaceUnread]);
 
   // Wait until auth state is resolved
   if (!initialized) {
@@ -71,7 +122,12 @@ export default function TabLayout() {
         options={{
           title: 'Marketplace',
           tabBarIcon: ({ focused, color }) => (
-            <TabBarIcon name={focused ? 'storefront' : 'storefront-outline'} focused={focused} color={color} />
+            <TabBarIcon
+              name={focused ? 'storefront' : 'storefront-outline'}
+              focused={focused}
+              color={color}
+              badge={marketplaceUnreadCount}
+            />
           ),
         }}
       />
@@ -80,7 +136,12 @@ export default function TabLayout() {
         options={{
           title: 'Feed',
           tabBarIcon: ({ focused, color }) => (
-            <TabBarIcon name={focused ? 'chatbubbles' : 'chatbubbles-outline'} focused={focused} color={color} />
+            <TabBarIcon
+              name={focused ? 'chatbubbles' : 'chatbubbles-outline'}
+              focused={focused}
+              color={color}
+              badge={unreadCounts.all}
+            />
           ),
         }}
       />
@@ -103,3 +164,38 @@ export default function TabLayout() {
     </Tabs>
   );
 }
+
+const styles = StyleSheet.create({
+  iconContainer: {
+    width: 28,
+    height: 28,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  tabBadgeBubble: {
+    position: 'absolute',
+    top: -4,
+    right: -7,
+    backgroundColor: '#EF4444',
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    paddingHorizontal: 3,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 1,
+  },
+  tabBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 9,
+    fontWeight: '800',
+    textAlign: 'center',
+    lineHeight: 11,
+  },
+});

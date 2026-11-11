@@ -253,7 +253,7 @@ export default function ProfileScreen() {
             <Text style={styles.actionTagText}>Anon</Text>
           </View>
           <Text style={styles.actionBtnLabel}>Raise Complaint</Text>
-          <Text style={styles.actionBtnSub}>-10 streak rule</Text>
+          <Text style={styles.actionBtnSub}>-25 streak rule</Text>
         </TouchableOpacity>
 
         {/* Leave Request Button */}
