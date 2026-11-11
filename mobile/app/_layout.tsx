@@ -22,11 +22,20 @@ export default function RootLayout() {
 
   // Catchup on server sleep / background resumes: flushes queues and triggers Sunday reset
   useEffect(() => {
-    triggerCatchup().catch(() => {});
+    let lastCatchup = 0;
+    const safeCatchup = () => {
+      const now = Date.now();
+      // Debounce: prevent duplicate catch-up triggers within 15 seconds
+      if (now - lastCatchup < 15000) return;
+      lastCatchup = now;
+      triggerCatchup().catch(() => {});
+    };
+
+    safeCatchup();
 
     const sub = AppState.addEventListener('change', (state: AppStateStatus) => {
       if (state === 'active') {
-        triggerCatchup().catch(() => {});
+        safeCatchup();
       }
     });
 

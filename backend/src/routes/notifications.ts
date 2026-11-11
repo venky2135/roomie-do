@@ -237,7 +237,7 @@ router.post('/notify-complaint-raised', authMiddleware, async (req: AuthRequest,
 // POST /api/notifications/notify-complaint-upheld — Notify house when complaint is upheld and streak penalty applied
 router.post('/notify-complaint-upheld', authMiddleware, async (req: AuthRequest, res: Response): Promise<void> => {
   const userId = req.userId!;
-  const { logId, accusedUserId, accusedUsername, title, streakPenalty = 10 } = req.body;
+  const { logId, accusedUserId, accusedUsername, title, streakPenalty = 25 } = req.body;
 
   try {
     const { data: profile } = await supabase
@@ -389,7 +389,7 @@ router.post('/test', authMiddleware, async (req: AuthRequest, res: Response): Pr
 });
 
 // GET /api/notifications/catchup — Flushes queued notifications & performs Sunday + daily nudge catch-up
-router.get('/catchup', async (_req, res: Response): Promise<void> => {
+router.get('/catchup', async (req, res: Response): Promise<void> => {
   try {
     const queueResult = await NotificationQueueService.flushQueue();
 
@@ -400,8 +400,19 @@ router.get('/catchup', async (_req, res: Response): Promise<void> => {
       weeklyRan = true;
     }
 
-    // Daily promotional nudge catch-up (Zomato-style): checks and delivers missed nudges after sleep
-    const nudgeResult = await ZomatoNotificationService.checkAndRunPendingDailyNudge();
+    // Try to identify the active user who just opened the app (to exclude them from receiving "open app" nudges)
+    let activeUserId: string | undefined;
+    const authHeader = req.headers.authorization;
+    if (authHeader?.startsWith('Bearer ')) {
+      const jwtToken = authHeader.split(' ')[1];
+      try {
+        const { data: authData } = await supabase.auth.getUser(jwtToken);
+        activeUserId = authData?.user?.id;
+      } catch {}
+    }
+
+    // Daily promotional nudge catch-up: delivers missed nudges, excluding active user
+    const nudgeResult = await ZomatoNotificationService.checkAndRunPendingDailyNudge(activeUserId);
 
     res.json({
       success: true,

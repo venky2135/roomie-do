@@ -102,11 +102,16 @@ export class NotificationQueueService {
             data: item.data || {},
           });
         } else if (item.house_id) {
-          result = await NotificationService.sendToHouse(item.house_id, {
-            title: item.title,
-            body: item.body,
-            data: item.data || {},
-          });
+          const excludeUserId = (item.data as any)?.excludeUserId || undefined;
+          result = await NotificationService.sendToHouse(
+            item.house_id,
+            {
+              title: item.title,
+              body: item.body,
+              data: item.data || {},
+            },
+            excludeUserId
+          );
         }
 
         // Mark as sent

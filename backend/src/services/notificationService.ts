@@ -14,6 +14,22 @@ export class NotificationService {
   static async registerToken(userId: string, token: string, deviceType: string = 'android'): Promise<void> {
     if (!token) return;
 
+    // 1. If this device token was registered to another user (e.g. testing / account switch on same phone),
+    // remove it from the old user so the physical device doesn't receive duplicate notifications.
+    await supabase
+      .from('user_device_tokens')
+      .delete()
+      .eq('token', token)
+      .neq('user_id', userId);
+
+    // 2. Also remove any older tokens for this user on this deviceType
+    await supabase
+      .from('user_device_tokens')
+      .delete()
+      .eq('user_id', userId)
+      .neq('token', token);
+
+    // 3. Upsert current token
     const { error } = await supabase
       .from('user_device_tokens')
       .upsert(
@@ -118,13 +134,15 @@ export class NotificationService {
     tokens: string[],
     payload: NotificationPayload
   ): Promise<{ successCount: number; failureCount: number }> {
-    if (!messaging || tokens.length === 0) {
+    const uniqueTokens = Array.from(new Set(tokens.filter(Boolean)));
+    if (!messaging || uniqueTokens.length === 0) {
       return { successCount: 0, failureCount: 0 };
     }
 
     try {
+      const tag = payload.data?.type || 'roomiedo_general';
       const response = await messaging.sendEachForMulticast({
-        tokens,
+        tokens: uniqueTokens,
         notification: {
           title: payload.title,
           body: payload.body,
@@ -132,9 +150,11 @@ export class NotificationService {
         data: payload.data || {},
         android: {
           priority: 'high',
+          collapseKey: tag,
           notification: {
             sound: 'default',
             channelId: 'roomiedo_general',
+            tag: tag,
           },
         },
       });

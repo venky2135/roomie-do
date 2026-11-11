@@ -117,8 +117,9 @@ export class ZomatoNotificationService {
 
   /**
    * Check and send pending daily promotional nudge across all houses if missed due to Render sleep.
+   * If excludeUserId is provided (e.g. user who just woke up the app), don't send the nudge to that active user.
    */
-  static async checkAndRunPendingDailyNudge(): Promise<{ sent: boolean; reason?: string }> {
+  static async checkAndRunPendingDailyNudge(excludeUserId?: string): Promise<{ sent: boolean; reason?: string }> {
     if (this.isCheckingNudge) {
       return { sent: false, reason: 'Already in progress' };
     }
@@ -169,14 +170,19 @@ export class ZomatoNotificationService {
         const message = this.getRandomMessage();
         console.log(`[ZomatoPush] Delivering ${slot.slotName} to house "${house.name}": "${message.title}"`);
 
+        const dataPayload: Record<string, string> = {
+          type: 'zomato_nudge',
+          slotKey: slot.slotKey,
+        };
+        if (excludeUserId) {
+          dataPayload.excludeUserId = excludeUserId;
+        }
+
         await NotificationQueueService.enqueue({
           houseId: house.id,
           title: message.title,
           body: message.body,
-          data: {
-            type: 'zomato_nudge',
-            slotKey: slot.slotKey,
-          },
+          data: dataPayload,
         });
 
         anySent = true;
